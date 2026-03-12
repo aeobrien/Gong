@@ -2,8 +2,9 @@
 
 #include <JuceHeader.h>
 #include "ConvolutionEngine.h"
-#include "ResonatorSynth.h"
-#include "EnvelopeFollower.h"
+#include "GongSynthesizer.h"
+#include "ExciterProcessor.h"
+#include "MultibandCompressor.h"
 #include "IRWaveformComponent.h"
 
 class MainComponent : public juce::AudioAppComponent,
@@ -35,15 +36,17 @@ private:
     void setMidiInput(int index);
     void updateMidiDeviceList();
     void loadIRFile();
-    void updateEnvelopeFollowerTarget();
+    void setupTooltips();
+    void updateResonatorFrequencyDisplay(int index);
 
     double currentSampleRate = 48000.0;
     int currentBlockSize = 256;
 
-    // Core audio
-    ResonatorSynth synth;
+    // Core audio processing
+    GongSynthesizer gongSynth;
     ConvolutionEngine convolutionEngine;
-    EnvelopeFollower envelopeFollower;
+    ExciterProcessor exciterProcessor;
+    MultibandCompressor multibandCompressor;
 
     juce::AudioBuffer<float> synthBuffer;
     juce::AudioBuffer<float> audioInputBuffer;
@@ -59,69 +62,61 @@ private:
     int lastMidiInputIndex = 0;
     juce::Array<juce::MidiDeviceInfo> midiDevices;
 
-    // Excitation Section
-    juce::ToggleButton midiImpulseButton { "MIDI Impulse" };
-    juce::ToggleButton audioInputButton { "Audio Input" };
+    // Input Section
+    juce::Label inputGainLabel { {}, "Input Gain" };
+    juce::Slider inputGainSlider;
+    juce::Label strikeThreshLabel { {}, "Strike Thresh" };
+    juce::Slider strikeThreshSlider;
+    juce::Label strikeHoldoffLabel { {}, "Holdoff" };
+    juce::Slider strikeHoldoffSlider;
 
-    // Audio input frequency control (visible when audio input mode is selected)
-    juce::Label audioInputFreqLabel { {}, "Frequency" };
-    juce::Slider audioInputFreqSlider;
+    // Energy Section
+    juce::Label energyDecayLabel { {}, "Decay" };
+    juce::Slider energyDecaySlider;
+    juce::Label energyInjectionLabel { {}, "Injection" };
+    juce::Slider energyInjectionSlider;
+    juce::Label energyPowerLabel { {}, "Power" };
+    juce::Slider energyPowerSlider;
 
-    juce::Label filterCutoffLabel { {}, "Cutoff" };
-    juce::Slider filterCutoffSlider;
-    juce::Label filterResoLabel { {}, "Reso" };
-    juce::Slider filterResoSlider;
-    juce::ComboBox filterTypeCombo;
-    juce::Label filterTypeLabel { {}, "Type" };
-    juce::Label velocityCurveLabel { {}, "Vel Curve" };
-    juce::Slider velocityCurveSlider;
+    // Global Resonator Controls
+    juce::Slider globalDecaySlider;
+    juce::Label globalDecayLabel { {}, "Decay" };
+    juce::Slider globalBrightnessSlider;
+    juce::Label globalBrightnessLabel { {}, "Brightness" };
+    juce::Slider globalSpreadLevelSlider;
+    juce::Label globalSpreadLevelLabel { {}, "Spread Lvl" };
+    juce::Slider globalSpreadPanWidthSlider;
+    juce::Label globalSpreadPanWidthLabel { {}, "Pan Width" };
 
-    // Envelope Follower Section
-    juce::ToggleButton envFollowerEnableButton { "Enable" };
-    juce::Label envAttackLabel { {}, "Attack" };
-    juce::Slider envAttackSlider;
-    juce::Label envReleaseLabel { {}, "Release" };
-    juce::Slider envReleaseSlider;
-    juce::ComboBox envTargetCombo;
-    juce::Label envTargetLabel { {}, "Target" };
-    juce::Slider envAmountSlider;
-    juce::Label envAmountLabel { {}, "Amount" };
-    float envFollowerAmount = 0.5f;
-    int envFollowerTarget = 0; // 0=Velocity, 1=Filter Cutoff, 2=Decay, 3=Brightness, 4=Reverb
+    // Per-Resonator Controls (4 resonators)
+    static constexpr int kNumResonators = 4;
 
-    // Resonator Global
-    juce::Slider decaySlider;
-    juce::Label decayLabel { {}, "Decay" };
-    juce::Slider brightnessSlider;
-    juce::Label brightnessLabel { {}, "Brightness" };
-    juce::Slider resonatorGainSlider;
-    juce::Label resonatorGainLabel { {}, "Res Gain" };
+    // Column headers for resonator grid
+    juce::Label resHeaderOn { {}, "On" };
+    juce::Label resHeaderMode { {}, "Mode" };
+    juce::Label resHeaderFreq { {}, "Frequency" };
+    juce::Label resHeaderGain { {}, "Gain" };
+    juce::Label resHeaderBright { {}, "Bright" };
+    juce::Label resHeaderSpread { {}, "Spread" };
+    juce::Label resHeaderDetune { {}, "Detune" };
+    juce::Label resHeaderPan { {}, "Pan" };
 
-    // Per-Mode Controls
-    static constexpr int kNumModes = 8;
-
-    // Column header labels for mode controls
-    juce::Label modeHeaderLabel { {}, "Mode" };
-    juce::Label freqHeaderLabel { {}, "Freq" };
-    juce::Label decayHeaderLabel { {}, "Decay" };
-    juce::Label gainHeaderLabel { {}, "Gain" };
-    juce::Label detuneHeaderLabel { {}, "Detune" };
-    juce::Label widthHeaderLabel { {}, "Width" };
-    juce::Label enableHeaderLabel { {}, "On" };
-    juce::Label ratioHeaderLabel { {}, "Ratio" };
-
-    struct ModeControls
+    struct ResonatorControls
     {
         juce::Label nameLabel;
-        juce::Slider freqSlider;
-        juce::Slider decaySlider;
-        juce::Slider gainSlider;
-        juce::Slider detuneSlider;
-        juce::Slider widthSlider;
         juce::ToggleButton enableButton;
-        juce::Label ratioLabel;
+        juce::ToggleButton freeModeButton { "Free" };
+        juce::ToggleButton snapModeButton { "Snap" };
+        juce::Slider freqSlider;
+        juce::ComboBox noteCombo;
+        juce::Slider gainSlider;
+        juce::Label freqValueLabel;
+        juce::Slider brightnessModSlider;
+        juce::Slider spreadModSlider;
+        juce::Slider detuneModSlider;
+        juce::Slider panModSlider;
     };
-    std::array<ModeControls, kNumModes> modeControls;
+    std::array<ResonatorControls, kNumResonators> resonatorControls;
 
     // Convolution Section
     IRWaveformComponent irWaveform;
@@ -130,15 +125,46 @@ private:
     juce::Slider reverbMixSlider;
     juce::Label reverbMixLabel { {}, "Mix" };
     juce::Slider convGainSlider;
-    juce::Label convGainLabel { {}, "Conv Gain" };
+    juce::Label convGainLabel { {}, "Gain" };
+
+    // Exciter Section
+    juce::ToggleButton exciterEnableButton { "Exciter" };
+    juce::Label exciterFreqLabel { {}, "HP Freq" };
+    juce::Slider exciterFreqSlider;
+    juce::Label exciterDriveLabel { {}, "Drive" };
+    juce::Slider exciterDriveSlider;
+    juce::Label exciterMixLabel { {}, "Mix" };
+    juce::Slider exciterMixSlider;
+
+    // Multiband Compressor Section
+    juce::ToggleButton compEnableButton { "Compressor" };
+    juce::Label compThreshLabel { {}, "Thresh" };
+    juce::Slider compThreshSlider;
+    juce::Label compRatioLabel { {}, "Ratio" };
+    juce::Slider compRatioSlider;
+    juce::Label compAttackLabel { {}, "Atk" };
+    juce::Slider compAttackSlider;
+    juce::Label compReleaseLabel { {}, "Rel" };
+    juce::Slider compReleaseSlider;
 
     // Bottom Controls
     juce::Slider volumeSlider;
     juce::Label volumeLabel { {}, "Volume" };
     juce::TextButton panicButton { "PANIC" };
 
-    // Input level meter
+    // Display values
     float currentInputLevel = 0.0f;
+    float currentGlobalEnergy = 0.0f;
+
+    // Debug level tracking (signal chain)
+    float debugLevelAfterSynth = 0.0f;
+    float debugLevelAfterConv = 0.0f;
+    float debugLevelAfterExciter = 0.0f;
+    float debugLevelAfterComp = 0.0f;
+    float debugLevelFinal = 0.0f;
+
+    // Tooltip component
+    juce::TooltipWindow tooltipWindow { this, 300 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

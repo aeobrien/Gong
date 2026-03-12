@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(GongConvolutionReverb VERSION 1.0.0)
+project(GongEnergySynthesizer VERSION 2.0.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,35 +9,44 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_subdirectory(JUCE)
 
 # Define the application
-juce_add_gui_app(GongReverb
-    PRODUCT_NAME "Gong Reverb"
+juce_add_gui_app(GongSynth
+    PRODUCT_NAME "Gong Energy Synthesizer"
     COMPANY_NAME "Gong Audio"
-    BUNDLE_ID "com.gongaudio.gongreverb"
+    BUNDLE_ID "com.gongaudio.gongsynth"
     MICROPHONE_PERMISSION_ENABLED TRUE
-    MICROPHONE_PERMISSION_TEXT "Gong Reverb needs microphone access for audio input excitation and envelope following."
+    MICROPHONE_PERMISSION_TEXT "Gong Synthesizer needs microphone access for audio input excitation and strike detection."
 )
 
 # Source files
-target_sources(GongReverb PRIVATE
+target_sources(GongSynth PRIVATE
+    # Core
     src/Main.cpp
     src/MainComponent.cpp
-    src/ConvolutionEngine.cpp
+
+    # Audio Engine
+    src/EnergyAccumulator.cpp
+    src/SpreadVoiceResonator.cpp
+    src/ResonatorBank.cpp
+    src/GongSynthesizer.cpp
     src/ImpulseGenerator.cpp
-    src/Resonator.cpp
-    src/ResonatorVoice.cpp
-    src/ResonatorSynth.cpp
-    src/EnvelopeFollower.cpp
+
+    # Effects
+    src/ConvolutionEngine.cpp
+    src/ExciterProcessor.cpp
+    src/MultibandCompressor.cpp
+
+    # UI
     src/IRWaveformComponent.cpp
 )
 
 # JUCE modules
-target_compile_definitions(GongReverb PRIVATE
+target_compile_definitions(GongSynth PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_DISPLAY_SPLASH_SCREEN=0
 )
 
-target_link_libraries(GongReverb PRIVATE
+target_link_libraries(GongSynth PRIVATE
     juce::juce_audio_basics
     juce::juce_audio_devices
     juce::juce_audio_formats
@@ -54,7 +63,7 @@ target_link_libraries(GongReverb PRIVATE
 )
 
 # Generate JuceHeader.h
-juce_generate_juce_header(GongReverb)
+juce_generate_juce_header(GongSynth)
 
 # Resources directory for IR files
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/resources)

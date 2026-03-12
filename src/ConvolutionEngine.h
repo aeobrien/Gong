@@ -31,6 +31,8 @@ public:
     juce::String getIRFileName() const { return irFileName; }
 
 private:
+    // Default convolution - works up to ~10 seconds
+    // NonUniform mode tested but has same limitation
     juce::dsp::Convolution convolution;
     juce::dsp::DryWetMixer<float> dryWetMixer;
 
