@@ -4,17 +4,24 @@
 #include "EnergyAccumulator.h"
 #include "ResonatorBank.h"
 #include "ImpulseGenerator.h"
+#include "SyntheticImpulseGenerator.h"
+#include "MidiControllerMock.h"
 
 /**
  * Energy-accumulation-based gong synthesizer.
- * Replaces the JUCE Synthesiser-based ResonatorSynth with a simpler architecture:
- * - No polyphony management (single continuous resonator bank)
- * - Energy-based modulation instead of envelope followers
- * - Strike detection from audio input
+ * Supports two excitation modes:
+ * - AudioInput: existing mic input path with strike detection
+ * - SyntheticImpulse: MIDI-controller-driven shaped noise bursts
  */
 class GongSynthesizer
 {
 public:
+    enum class ExcitationMode
+    {
+        AudioInput,         // Existing mic path
+        SyntheticImpulse    // MIDI → StrikeDescriptor → shaped noise burst
+    };
+
     GongSynthesizer();
     ~GongSynthesizer() = default;
 
@@ -22,9 +29,6 @@ public:
     void releaseResources();
 
     // Main processing
-    // audioInput: incoming audio for excitation and strike detection
-    // outputBuffer: where to write processed audio
-    // midiMessages: MIDI input for triggering strikes
     void process(juce::AudioBuffer<float>& outputBuffer,
                  const juce::AudioBuffer<float>& audioInput,
                  juce::MidiBuffer& midiMessages,
@@ -40,11 +44,18 @@ public:
     ImpulseGenerator& getImpulseGenerator() { return impulseGenerator; }
     const ImpulseGenerator& getImpulseGenerator() const { return impulseGenerator; }
 
+    SyntheticImpulseGenerator& getSyntheticImpulseGenerator() { return syntheticImpulseGen; }
+    MidiControllerMock& getMidiControllerMock() { return midiControllerMock; }
+
+    // Excitation mode
+    void setExcitationMode(ExcitationMode mode);
+    ExcitationMode getExcitationMode() const { return excitationMode; }
+
     // Strike detection settings
-    void setStrikeThreshold(float threshold);  // Amplitude threshold for audio strike detection
+    void setStrikeThreshold(float threshold);
     float getStrikeThreshold() const { return strikeThreshold; }
 
-    void setStrikeHoldoffMs(float ms);  // Minimum time between strikes
+    void setStrikeHoldoffMs(float ms);
     float getStrikeHoldoffMs() const { return strikeHoldoffMs; }
 
     // Audio input settings
@@ -75,10 +86,15 @@ private:
     double sampleRate = 48000.0;
     int blockSize = 256;
 
+    // Excitation mode
+    ExcitationMode excitationMode = ExcitationMode::AudioInput;
+
     // Core components
     EnergyAccumulator energyAccumulator;
     ResonatorBank resonatorBank;
     ImpulseGenerator impulseGenerator;
+    SyntheticImpulseGenerator syntheticImpulseGen;
+    MidiControllerMock midiControllerMock;
 
     // Strike detection
     float strikeThreshold = 0.1f;
@@ -91,9 +107,10 @@ private:
     float inputGain = 1.0f;
     bool midiEnabled = true;
 
-    // Processing buffers
+    // Processing buffers (pre-allocated to avoid heap allocs on audio thread)
     juce::AudioBuffer<float> impulseBuffer;
     juce::AudioBuffer<float> resonatorBuffer;
+    juce::AudioBuffer<float> stereoInputBuffer;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(GongSynthesizer)
 };

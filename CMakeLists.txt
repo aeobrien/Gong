@@ -29,14 +29,27 @@ target_sources(GongSynth PRIVATE
     src/ResonatorBank.cpp
     src/GongSynthesizer.cpp
     src/ImpulseGenerator.cpp
+    src/SyntheticImpulseGenerator.cpp
+    src/MidiControllerMock.cpp
 
     # Effects
     src/ConvolutionEngine.cpp
     src/ExciterProcessor.cpp
     src/MultibandCompressor.cpp
 
+    # Presets
+    src/PresetManager.cpp
+
+    # Server
+    src/PerformanceServer.cpp
+
     # UI
     src/IRWaveformComponent.cpp
+)
+
+# Include paths for third-party libs
+target_include_directories(GongSynth PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/libs/httplib
 )
 
 # JUCE modules
@@ -67,3 +80,9 @@ juce_generate_juce_header(GongSynth)
 
 # Resources directory for IR files
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/resources)
+
+# Presets directory
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/presets)
+
+# Test harness
+add_subdirectory(tests/ConvolutionTest)

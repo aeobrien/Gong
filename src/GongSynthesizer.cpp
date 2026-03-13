@@ -14,10 +14,12 @@ void GongSynthesizer::prepareToPlay(double newSampleRate, int samplesPerBlock)
     energyAccumulator.prepare(sampleRate);
     resonatorBank.prepare(sampleRate, blockSize);
     impulseGenerator.prepare(sampleRate, blockSize);
+    syntheticImpulseGen.prepare(sampleRate, blockSize);
 
     // Allocate processing buffers
     impulseBuffer.setSize(2, blockSize);
     resonatorBuffer.setSize(2, blockSize);
+    stereoInputBuffer.setSize(2, blockSize);
 
     // Calculate holdoff samples
     strikeHoldoffSamples = static_cast<int>(strikeHoldoffMs * sampleRate / 1000.0);
@@ -29,6 +31,7 @@ void GongSynthesizer::releaseResources()
 {
     impulseBuffer.setSize(0, 0);
     resonatorBuffer.setSize(0, 0);
+    stereoInputBuffer.setSize(0, 0);
 }
 
 void GongSynthesizer::process(juce::AudioBuffer<float>& outputBuffer,
@@ -42,14 +45,11 @@ void GongSynthesizer::process(juce::AudioBuffer<float>& outputBuffer,
     if (resonatorBuffer.getNumSamples() < numSamples)
         resonatorBuffer.setSize(2, numSamples, false, false, true);
 
-    // Process MIDI for strikes
+    // Process MIDI
     if (midiEnabled)
     {
         processMidiMessages(midiMessages);
     }
-
-    // Process audio input for strike detection
-    processStrikeDetection(audioInput, numSamples);
 
     // Update energy accumulator (decay)
     energyAccumulator.process(numSamples);
@@ -57,32 +57,45 @@ void GongSynthesizer::process(juce::AudioBuffer<float>& outputBuffer,
     // Route energy to resonator bank
     resonatorBank.updateEnergy(energyAccumulator);
 
-    // Process audio input through impulse generator filter
+    // Generate impulse block based on excitation mode
     juce::AudioBuffer<float> impulseBlock(impulseBuffer.getArrayOfWritePointers(), 2, numSamples);
 
-    // Create stereo input if needed
-    int inputChannels = audioInput.getNumChannels();
-    juce::AudioBuffer<float> stereoInput(2, numSamples);
+    if (excitationMode == ExcitationMode::AudioInput)
+    {
+        // === Existing audio input path (unchanged) ===
+        processStrikeDetection(audioInput, numSamples);
 
-    if (inputChannels >= 2)
-    {
-        stereoInput.copyFrom(0, 0, audioInput, 0, 0, numSamples);
-        stereoInput.copyFrom(1, 0, audioInput, 1, 0, numSamples);
-    }
-    else if (inputChannels == 1)
-    {
-        stereoInput.copyFrom(0, 0, audioInput, 0, 0, numSamples);
-        stereoInput.copyFrom(1, 0, audioInput, 0, 0, numSamples);
+        // Use pre-allocated stereo input buffer (no heap alloc on audio thread)
+        int inputChannels = audioInput.getNumChannels();
+        if (stereoInputBuffer.getNumSamples() < numSamples)
+            stereoInputBuffer.setSize(2, numSamples, false, false, true);
+
+        if (inputChannels >= 2)
+        {
+            stereoInputBuffer.copyFrom(0, 0, audioInput, 0, 0, numSamples);
+            stereoInputBuffer.copyFrom(1, 0, audioInput, 1, 0, numSamples);
+        }
+        else if (inputChannels == 1)
+        {
+            stereoInputBuffer.copyFrom(0, 0, audioInput, 0, 0, numSamples);
+            stereoInputBuffer.copyFrom(1, 0, audioInput, 0, 0, numSamples);
+        }
+        else
+        {
+            stereoInputBuffer.clear();
+        }
+
+        // Process through impulse generator (filters the input)
+        juce::AudioBuffer<float> stereoInput(stereoInputBuffer.getArrayOfWritePointers(), 2, numSamples);
+        impulseGenerator.processWithAudioInput(impulseBlock, stereoInput, inputGain);
     }
     else
     {
-        stereoInput.clear();
+        // === Synthetic impulse path ===
+        syntheticImpulseGen.process(impulseBlock);
     }
 
-    // Process through impulse generator (filters the input)
-    impulseGenerator.processWithAudioInput(impulseBlock, stereoInput, inputGain);
-
-    // Process through resonator bank
+    // Process through resonator bank (same either way)
     juce::AudioBuffer<float> resonatorBlock(resonatorBuffer.getArrayOfWritePointers(), 2, numSamples);
     resonatorBank.process(impulseBlock, resonatorBlock);
 
@@ -109,17 +122,14 @@ void GongSynthesizer::processStrikeDetection(const juce::AudioBuffer<float>& aud
     peak *= inputGain;
 
     // Detect strike: peak above threshold and rising above previous peak
-    // Also check holdoff time
     samplesSinceLastStrike += numSamples;
 
     if (peak > strikeThreshold &&
-        peak > previousPeak * 1.5f &&  // Significant rise
+        peak > previousPeak * 1.5f &&
         samplesSinceLastStrike >= strikeHoldoffSamples)
     {
-        // Strike detected!
         float velocity = juce::jlimit(0.0f, 1.0f, peak);
 
-        // Inject energy to all bands
         for (int band = 0; band < EnergyAccumulator::kNumBands; ++band)
         {
             energyAccumulator.injectEnergy(velocity, band);
@@ -137,26 +147,48 @@ void GongSynthesizer::processMidiMessages(juce::MidiBuffer& midiMessages)
     {
         auto message = metadata.getMessage();
 
-        if (message.isNoteOn())
+        if (excitationMode == ExcitationMode::SyntheticImpulse)
         {
-            float velocity = message.getFloatVelocity();
-            int noteNumber = message.getNoteNumber();
-
-            // Map MIDI note to resonator (4 resonators, spread across keyboard)
-            // Notes 0-31 -> Resonator 0
-            // Notes 32-63 -> Resonator 1
-            // Notes 64-95 -> Resonator 2
-            // Notes 96-127 -> Resonator 3
-            int resonatorIndex = noteNumber / 32;
-            resonatorIndex = juce::jlimit(0, ResonatorBank::kNumResonators - 1, resonatorIndex);
-
-            injectStrike(velocity, resonatorIndex);
-
-            // Also set the resonator frequency based on MIDI note in snap mode
-            auto& resonator = resonatorBank.getResonator(resonatorIndex);
-            if (resonator.getFrequencyMode() == SpreadVoiceResonator::FrequencyMode::Snap)
+            // Route through MidiControllerMock
+            if (midiControllerMock.processMidiMessage(message))
             {
-                resonator.setMidiNote(noteNumber);
+                // Strike triggered
+                const auto& desc = midiControllerMock.getCurrentDescriptor();
+                int resIndex = juce::jlimit(0, ResonatorBank::kNumResonators - 1, static_cast<int>(desc.padId));
+
+                // Trigger synthetic impulse
+                syntheticImpulseGen.trigger(desc);
+
+                // Inject energy
+                float velocity = desc.velocityNorm();
+                injectStrike(velocity, resIndex);
+
+                // Set resonator frequency in snap mode
+                auto& resonator = resonatorBank.getResonator(resIndex);
+                if (resonator.getFrequencyMode() == SpreadVoiceResonator::FrequencyMode::Snap)
+                {
+                    resonator.setMidiNote(message.getNoteNumber());
+                }
+            }
+        }
+        else
+        {
+            // Existing MIDI handling for AudioInput mode
+            if (message.isNoteOn())
+            {
+                float velocity = message.getFloatVelocity();
+                int noteNumber = message.getNoteNumber();
+
+                int resonatorIndex = noteNumber / 32;
+                resonatorIndex = juce::jlimit(0, ResonatorBank::kNumResonators - 1, resonatorIndex);
+
+                injectStrike(velocity, resonatorIndex);
+
+                auto& resonator = resonatorBank.getResonator(resonatorIndex);
+                if (resonator.getFrequencyMode() == SpreadVoiceResonator::FrequencyMode::Snap)
+                {
+                    resonator.setMidiNote(noteNumber);
+                }
             }
         }
     }
@@ -166,7 +198,6 @@ void GongSynthesizer::injectStrike(float velocity, int resonatorIndex)
 {
     if (resonatorIndex < 0)
     {
-        // Inject to all bands
         for (int band = 0; band < EnergyAccumulator::kNumBands; ++band)
         {
             energyAccumulator.injectEnergy(velocity, band);
@@ -174,9 +205,13 @@ void GongSynthesizer::injectStrike(float velocity, int resonatorIndex)
     }
     else
     {
-        // Inject to specific band
         energyAccumulator.injectEnergy(velocity, resonatorIndex);
     }
+}
+
+void GongSynthesizer::setExcitationMode(ExcitationMode mode)
+{
+    excitationMode = mode;
 }
 
 void GongSynthesizer::setStrikeThreshold(float threshold)
@@ -225,11 +260,12 @@ void GongSynthesizer::reset()
     energyAccumulator.reset();
     resonatorBank.reset();
     impulseGenerator.reset();
+    syntheticImpulseGen.reset();
 
     impulseBuffer.clear();
     resonatorBuffer.clear();
 
-    samplesSinceLastStrike = strikeHoldoffSamples;  // Allow immediate first strike
+    samplesSinceLastStrike = strikeHoldoffSamples;
     previousPeak = 0.0f;
 }
 

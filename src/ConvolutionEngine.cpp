@@ -2,7 +2,6 @@
 
 ConvolutionEngine::ConvolutionEngine()
 {
-    convolution.reset();
 }
 
 void ConvolutionEngine::prepare(double sampleRate, int blockSize)
@@ -19,6 +18,9 @@ void ConvolutionEngine::prepare(double sampleRate, int blockSize)
     dryWetMixer.prepare(spec);
     dryWetMixer.setWetMixProportion(wetDryMix);
 
+    // Pre-allocate dry buffer so we never allocate on the audio thread
+    dryBuffer.setSize(2, blockSize);
+
     isPrepared = true;
 }
 
@@ -27,33 +29,58 @@ void ConvolutionEngine::process(juce::AudioBuffer<float>& buffer)
     if (!isPrepared)
         return;
 
-    // Bypass if no IR loaded or mix is 0
-    if (!irLoaded || wetDryMix < 0.001f)
+    // Bypass if no IR loaded, mix is 0, or currently loading
+    if (!irLoaded || wetDryMix < 0.001f || isLoadingIR.load(std::memory_order_acquire))
     {
         if (outputGainDb != 0.0f)
             buffer.applyGain(juce::Decibels::decibelsToGain(outputGainDb));
         return;
     }
 
-    // Store dry signal for mixing
-    juce::AudioBuffer<float> dryBuffer;
-    dryBuffer.makeCopyOf(buffer);
+    auto numSamples = buffer.getNumSamples();
+    auto numChannels = buffer.getNumChannels();
+
+    // Ensure dry buffer is large enough (no-op if already the right size)
+    if (dryBuffer.getNumSamples() < numSamples || dryBuffer.getNumChannels() < numChannels)
+        dryBuffer.setSize(numChannels, numSamples, false, false, true);
+
+    // Measure input level before convolution
+    float inputRms = buffer.getMagnitude(0, 0, numSamples);
+
+    // Store dry signal for mixing (into pre-allocated buffer)
+    for (int ch = 0; ch < numChannels; ++ch)
+        dryBuffer.copyFrom(ch, 0, buffer, ch, 0, numSamples);
 
     // Process through convolution
     juce::dsp::AudioBlock<float> block(buffer);
     juce::dsp::ProcessContextReplacing<float> context(block);
     convolution.process(context);
 
+    // Measure convolution output level
+    float convRms = buffer.getMagnitude(0, 0, numSamples);
+
+    // Periodic diagnostic logging (every ~2 seconds at 48kHz/512)
+    static int diagCounter = 0;
+    if (++diagCounter >= 188)  // ~2s at 48kHz/512
+    {
+        diagCounter = 0;
+        juce::Logger::writeToLog("CONV DIAG: inputPeak=" + juce::String(inputRms, 4)
+            + " convOutPeak=" + juce::String(convRms, 4)
+            + " wetMix=" + juce::String(wetDryMix, 2)
+            + " irLoaded=" + juce::String((int)irLoaded)
+            + " isLoading=" + juce::String((int)isLoadingIR.load()));
+    }
+
     // Mix dry/wet
     float wet = wetDryMix;
     float dry = 1.0f - wet;
 
-    for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+    for (int ch = 0; ch < numChannels; ++ch)
     {
         auto* wetData = buffer.getWritePointer(ch);
         const auto* dryData = dryBuffer.getReadPointer(ch);
 
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
+        for (int i = 0; i < numSamples; ++i)
         {
             wetData[i] = dryData[i] * dry + wetData[i] * wet;
         }
@@ -98,13 +125,8 @@ bool ConvolutionEngine::loadImpulseResponse(const juce::File& file)
         irSampleRate = static_cast<int>(reader->sampleRate);
         irFileName = file.getFileName();
 
-        // Allocate buffer and read data
         int numChannels = static_cast<int>(reader->numChannels);
         int numSamples = static_cast<int>(reader->lengthInSamples);
-
-        // Limit IR to 10 seconds (longer causes CPU overload/silence)
-        int maxSamples = static_cast<int>(fileSampleRate * 10.0);
-        numSamples = juce::jmin(numSamples, maxSamples);
 
         irBuffer.setSize(numChannels, numSamples);
         reader->read(&irBuffer, 0, numSamples, 0, true, true);
@@ -113,10 +135,9 @@ bool ConvolutionEngine::loadImpulseResponse(const juce::File& file)
             + " (" + juce::String(numSamples) + " samples, "
             + juce::String(irSampleRate) + " Hz, "
             + juce::String(numChannels) + " channels)");
-    } // reader is destroyed here, releasing file handle
+    }
 
-    // Load into convolution from the buffer we already read (avoids file locking)
-    // Make a copy since loadImpulseResponse takes ownership via move
+    // Load into convolution from buffer copy
     juce::AudioBuffer<float> irCopy;
     irCopy.makeCopyOf(irBuffer);
 
@@ -124,30 +145,37 @@ bool ConvolutionEngine::loadImpulseResponse(const juce::File& file)
         std::move(irCopy),
         fileSampleRate,
         juce::dsp::Convolution::Stereo::yes,
-        juce::dsp::Convolution::Trim::no,  // Match working settings
+        juce::dsp::Convolution::Trim::no,
         juce::dsp::Convolution::Normalise::yes
     );
 
-    // Re-prepare the convolution after loading IR (this makes it work!)
+    // Force synchronous engine creation by re-preparing.
+    // Without this, the background thread computes the FFT partitions, but if the
+    // audio thread is busy (overloads), the engine swap never happens and the
+    // convolution outputs silence indefinitely. Re-prepare blocks briefly (~100ms
+    // for a 28s IR) but guarantees the engine is immediately usable.
+    // The isLoadingIR flag prevents the audio thread from calling process() on the
+    // convolution during prepare(), avoiding a race condition.
     if (isPrepared)
     {
+        isLoadingIR.store(true, std::memory_order_release);
         juce::dsp::ProcessSpec spec;
         spec.sampleRate = currentSampleRate;
         spec.maximumBlockSize = static_cast<juce::uint32>(currentBlockSize);
         spec.numChannels = 2;
         convolution.prepare(spec);
+        isLoadingIR.store(false, std::memory_order_release);
     }
 
     irLoaded = true;
-    juce::Logger::writeToLog("Loaded IR into convolution engine");
+    juce::Logger::writeToLog("Loaded IR into convolution engine (NonUniform, head=4096)");
     return true;
 }
 
 bool ConvolutionEngine::loadImpulseResponseFromData(const void* data, size_t dataSize)
 {
-    double fileSampleRate = 48000.0; // default
+    double fileSampleRate = 48000.0;
 
-    // Load IR data into buffer
     juce::AudioFormatManager formatManager;
     formatManager.registerBasicFormats();
 
@@ -167,14 +195,9 @@ bool ConvolutionEngine::loadImpulseResponseFromData(const void* data, size_t dat
     int numChannels = static_cast<int>(reader->numChannels);
     int numSamples = static_cast<int>(reader->lengthInSamples);
 
-    // Limit IR to 10 seconds
-    int maxSamples = static_cast<int>(fileSampleRate * 10.0);
-    numSamples = juce::jmin(numSamples, maxSamples);
-
     irBuffer.setSize(numChannels, numSamples);
     reader->read(&irBuffer, 0, numSamples, 0, true, true);
 
-    // Load from buffer
     juce::AudioBuffer<float> irCopy;
     irCopy.makeCopyOf(irBuffer);
 
@@ -186,18 +209,19 @@ bool ConvolutionEngine::loadImpulseResponseFromData(const void* data, size_t dat
         juce::dsp::Convolution::Normalise::yes
     );
 
-    // Re-prepare after loading
     if (isPrepared)
     {
+        isLoadingIR.store(true, std::memory_order_release);
         juce::dsp::ProcessSpec spec;
         spec.sampleRate = currentSampleRate;
         spec.maximumBlockSize = static_cast<juce::uint32>(currentBlockSize);
         spec.numChannels = 2;
         convolution.prepare(spec);
+        isLoadingIR.store(false, std::memory_order_release);
     }
 
     irLoaded = true;
-    juce::Logger::writeToLog("Loaded IR from embedded data");
+    juce::Logger::writeToLog("Loaded IR from embedded data (NonUniform, head=4096)");
     return true;
 }
 

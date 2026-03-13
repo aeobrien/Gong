@@ -6,13 +6,16 @@
 #include "ExciterProcessor.h"
 #include "MultibandCompressor.h"
 #include "IRWaveformComponent.h"
+#include "PresetManager.h"
+#include "PerformanceServer.h"
 
 class MainComponent : public juce::AudioAppComponent,
                       private juce::MidiInputCallback,
                       private juce::Slider::Listener,
                       private juce::Button::Listener,
                       private juce::ComboBox::Listener,
-                      private juce::Timer
+                      private juce::Timer,
+                      public PerformanceServer::Listener
 {
 public:
     MainComponent();
@@ -26,6 +29,14 @@ public:
     void resized() override;
     void timerCallback() override;
 
+    // PerformanceServer::Listener
+    juce::StringArray getPresetNames() override;
+    bool activatePreset(const juce::String& name) override;
+    juce::StringArray getIRNames() override;
+    bool activateIR(const juce::String& name) override;
+    juce::String getCurrentPresetName() override;
+    juce::String getCurrentIRName() override;
+
 private:
     // Callbacks
     void handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message) override;
@@ -38,6 +49,8 @@ private:
     void loadIRFile();
     void setupTooltips();
     void updateResonatorFrequencyDisplay(int index);
+    void updateUIFromState();
+    void updatePresetComboBox();
 
     double currentSampleRate = 48000.0;
     int currentBlockSize = 256;
@@ -47,6 +60,8 @@ private:
     ConvolutionEngine convolutionEngine;
     ExciterProcessor exciterProcessor;
     MultibandCompressor multibandCompressor;
+    PresetManager presetManager;
+    std::unique_ptr<PerformanceServer> performanceServer;
 
     juce::AudioBuffer<float> synthBuffer;
     juce::AudioBuffer<float> audioInputBuffer;
@@ -61,6 +76,10 @@ private:
     juce::Label midiInputListLabel;
     int lastMidiInputIndex = 0;
     juce::Array<juce::MidiDeviceInfo> midiDevices;
+
+    // Excitation mode toggle
+    juce::ToggleButton audioInputModeButton { "Audio In" };
+    juce::ToggleButton syntheticModeButton { "Synthetic" };
 
     // Input Section
     juce::Label inputGainLabel { {}, "Input Gain" };
@@ -147,6 +166,12 @@ private:
     juce::Label compReleaseLabel { {}, "Rel" };
     juce::Slider compReleaseSlider;
 
+    // Preset Section
+    juce::ComboBox presetComboBox;
+    juce::Label presetLabel { {}, "Preset" };
+    juce::TextButton presetSaveButton { "Save" };
+    juce::TextButton presetSaveAsButton { "Save As..." };
+
     // Bottom Controls
     juce::Slider volumeSlider;
     juce::Label volumeLabel { {}, "Volume" };
@@ -165,6 +190,12 @@ private:
 
     // Tooltip component
     juce::TooltipWindow tooltipWindow { this, 300 };
+
+    // Directories
+    juce::File sourceDirectory;
+    juce::File irDirectory;
+    juce::File presetsDirectory;
+    juce::File webDirectory;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainComponent)
 };

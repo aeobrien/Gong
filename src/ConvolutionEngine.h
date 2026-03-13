@@ -31,10 +31,13 @@ public:
     juce::String getIRFileName() const { return irFileName; }
 
 private:
-    // Default convolution - works up to ~10 seconds
-    // NonUniform mode tested but has same limitation
-    juce::dsp::Convolution convolution;
+    // NonUniform partitioned convolution — uses small FFTs for the head
+    // and progressively larger FFTs for the tail, making long IRs feasible.
+    juce::dsp::Convolution convolution { juce::dsp::Convolution::NonUniform { 4096 } };
     juce::dsp::DryWetMixer<float> dryWetMixer;
+
+    // Pre-allocated dry buffer (avoid heap allocation on audio thread)
+    juce::AudioBuffer<float> dryBuffer;
 
     // Store loaded IR for visualization
     juce::AudioBuffer<float> irBuffer;
@@ -47,6 +50,9 @@ private:
     float outputGainDb = 0.0f;
     bool irLoaded = false;
     bool isPrepared = false;
+
+    // Guard against concurrent prepare() and process() calls
+    std::atomic<bool> isLoadingIR { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ConvolutionEngine)
 };
