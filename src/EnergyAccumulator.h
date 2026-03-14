@@ -6,6 +6,13 @@
  * Energy accumulation system for gong synthesizer.
  * Maintains global and per-band energy reservoirs with leaky integrator decay
  * and nonlinear saturation for natural gong behavior.
+ *
+ * Nonlinear features:
+ * - Inter-band coupling: energy transfers between bands (Step 1)
+ * - Per-band decay: configurable per-band decay times (Step 2)
+ * - Damping/muting: fast exponential decay when active (Step 3)
+ * - Roll priming: continuous low-level energy injection (Step 4)
+ * - Power-law bloom: energy cascade at high levels (Step 5)
  */
 class EnergyAccumulator
 {
@@ -55,6 +62,26 @@ public:
     float getNormalizedGlobalEnergy() const;
     float getNormalizedBandEnergy(int band) const;
 
+    // --- Step 1: Inter-band coupling ---
+    void setCouplingRate(float rate);
+    float getCouplingRate() const { return couplingRate.load(); }
+
+    // --- Step 3: Damping/Muting ---
+    void setDampActive(bool active);
+    bool getDampActive() const { return dampActive.load(); }
+    void setDampRate(float rate);
+    float getDampRate() const { return dampRate.load(); }
+
+    // --- Step 4: Roll Priming ---
+    void setRollPrimeLevel(float level);
+    float getRollPrimeLevel() const { return rollPrimeLevel.load(); }
+
+    // --- Step 5: Power-law Bloom ---
+    void setBloomThreshold(float threshold);
+    float getBloomThreshold() const { return bloomThreshold.load(); }
+    void setBloomRate(float rate);
+    float getBloomRate() const { return bloomRate.load(); }
+
 private:
     void updateCoefficients();
     void updateBandCoefficient(int band);
@@ -80,6 +107,28 @@ private:
 
     // For thread-safe coefficient updates
     juce::SpinLock coeffLock;
+
+    // --- Step 1: Inter-band coupling ---
+    // 4x4 coupling matrix: couplingMatrix[i][j] = fraction of energy transferred from band i to band j
+    float couplingMatrix[kNumBands][kNumBands] = {
+        // To:  low    mid-lo mid-hi high
+        /*low*/   { 0.0f, 0.30f, 0.10f, 0.05f },
+        /*mid-lo*/{ 0.15f, 0.0f, 0.40f, 0.15f },
+        /*mid-hi*/{ 0.05f, 0.20f, 0.0f, 0.35f },
+        /*high*/  { 0.02f, 0.05f, 0.20f, 0.0f  }
+    };
+    std::atomic<float> couplingRate { 0.001f };
+
+    // --- Step 3: Damping/Muting ---
+    std::atomic<bool> dampActive { false };
+    std::atomic<float> dampRate { 0.95f };
+
+    // --- Step 4: Roll Priming ---
+    std::atomic<float> rollPrimeLevel { 0.0f };
+
+    // --- Step 5: Power-law Bloom ---
+    std::atomic<float> bloomThreshold { 0.7f };
+    std::atomic<float> bloomRate { 0.002f };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EnergyAccumulator)
 };

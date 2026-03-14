@@ -2,11 +2,15 @@
 
 EnergyAccumulator::EnergyAccumulator()
 {
-    // Initialize per-band energy
+    // Initialize per-band energy with physically-motivated defaults (Step 2)
+    bandDecayMs[0] = 3000.0f;  // Low: longest decay
+    bandDecayMs[1] = 2000.0f;  // Mid-low
+    bandDecayMs[2] = 1200.0f;  // Mid-high
+    bandDecayMs[3] = 800.0f;   // High: shortest decay
+
     for (int i = 0; i < kNumBands; ++i)
     {
         bandEnergy[i].store(0.0f);
-        bandDecayMs[i] = 1500.0f;  // Default 1.5 second band decay
         bandDecayCoeffs[i] = 0.999f;
     }
     updateCoefficients();
@@ -35,19 +39,92 @@ void EnergyAccumulator::process(int numSamples)
 
     juce::SpinLock::ScopedLockType lock(coeffLock);
 
+    float dt = static_cast<float>(numSamples) / static_cast<float>(sampleRate);
+
     // Apply decay to global energy
     float global = globalEnergy.load();
     float decayFactor = std::pow(globalDecayCoeff, static_cast<float>(numSamples));
     global *= decayFactor;
-    globalEnergy.store(global);
 
-    // Apply decay to each band
+    // Load per-band energies into local array for coupling computation
+    float E[kNumBands];
     for (int i = 0; i < kNumBands; ++i)
     {
-        float band = bandEnergy[i].load();
+        E[i] = bandEnergy[i].load();
+        // Apply per-band decay
         float bandDecayFactor = std::pow(bandDecayCoeffs[i], static_cast<float>(numSamples));
-        band *= bandDecayFactor;
-        bandEnergy[i].store(band);
+        E[i] *= bandDecayFactor;
+    }
+
+    // --- Step 3: Damping/Muting ---
+    if (dampActive.load())
+    {
+        float dampFactor = std::pow(dampRate.load(), static_cast<float>(numSamples));
+        global *= dampFactor;
+        for (int i = 0; i < kNumBands; ++i)
+            E[i] *= dampFactor;
+    }
+
+    // --- Step 4: Roll Priming ---
+    float rpl = rollPrimeLevel.load();
+    if (rpl > 0.0f)
+    {
+        float injection = rpl * dt;
+        E[0] += injection;
+        // Also add small amount to global
+        global += injection * 0.5f;
+    }
+
+    // --- Step 1: Inter-band energy coupling ---
+    float rate = couplingRate.load();
+    if (rate > 0.0f)
+    {
+        // Nonlinear coupling: rate increases with total energy
+        float totalEnergy = 0.0f;
+        for (int i = 0; i < kNumBands; ++i)
+            totalEnergy += E[i];
+        float effectiveRate = rate * (1.0f + totalEnergy * 2.0f);
+
+        float transferOut[kNumBands];
+        for (int i = 0; i < kNumBands; ++i)
+            transferOut[i] = E[i] * effectiveRate * dt;
+
+        for (int i = 0; i < kNumBands; ++i)
+        {
+            for (int j = 0; j < kNumBands; ++j)
+            {
+                if (i == j) continue;
+                float transfer = transferOut[i] * couplingMatrix[i][j];
+                E[j] += transfer;
+                E[i] -= transfer;
+            }
+        }
+    }
+
+    // --- Step 5: Power-law bloom ---
+    float bThresh = bloomThreshold.load();
+    float bRate = bloomRate.load();
+    float normalizedGlobal = global / globalMaxEnergy;
+    if (normalizedGlobal > bThresh && bThresh < 1.0f)
+    {
+        float bloomFactor = std::pow((normalizedGlobal - bThresh) / (1.0f - bThresh), 1.0f / 3.0f);
+        // Transfer energy upward through bands
+        for (int i = 0; i < kNumBands - 1; ++i)
+        {
+            float transfer = E[i] * bloomFactor * bRate * dt;
+            E[i + 1] += transfer;
+            E[i] -= transfer * 0.5f; // Partial drain from source
+        }
+    }
+
+    // Clamp and store
+    global = std::min(global, globalMaxEnergy);
+    globalEnergy.store(std::max(0.0f, global));
+
+    for (int i = 0; i < kNumBands; ++i)
+    {
+        E[i] = juce::jlimit(0.0f, globalMaxEnergy, E[i]);
+        bandEnergy[i].store(E[i]);
     }
 }
 
@@ -139,6 +216,36 @@ float EnergyAccumulator::getBandDecayMs(int band) const
     if (band >= 0 && band < kNumBands)
         return bandDecayMs[band];
     return 0.0f;
+}
+
+void EnergyAccumulator::setCouplingRate(float rate)
+{
+    couplingRate.store(juce::jlimit(0.0f, 0.1f, rate));
+}
+
+void EnergyAccumulator::setDampActive(bool active)
+{
+    dampActive.store(active);
+}
+
+void EnergyAccumulator::setDampRate(float rate)
+{
+    dampRate.store(juce::jlimit(0.5f, 0.999f, rate));
+}
+
+void EnergyAccumulator::setRollPrimeLevel(float level)
+{
+    rollPrimeLevel.store(juce::jlimit(0.0f, 1.0f, level));
+}
+
+void EnergyAccumulator::setBloomThreshold(float threshold)
+{
+    bloomThreshold.store(juce::jlimit(0.1f, 1.0f, threshold));
+}
+
+void EnergyAccumulator::setBloomRate(float rate)
+{
+    bloomRate.store(juce::jlimit(0.0f, 0.05f, rate));
 }
 
 void EnergyAccumulator::updateCoefficients()

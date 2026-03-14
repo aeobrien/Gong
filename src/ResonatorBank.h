@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 #include "SpreadVoiceResonator.h"
 #include "EnergyAccumulator.h"
+#include "ModalTemplate.h"
 
 /**
  * Container managing 4 independent SpreadVoiceResonators.
@@ -33,6 +34,14 @@ public:
     void setAllSpreadLevel(float level);
     void setAllSpreadPanWidth(float width);
 
+    // Step 6: Pitch glide for all resonators
+    void setAllPitchGlideDirection(float dir);
+    void setAllPitchGlideSensitivity(float cents);
+
+    // Step 11: Modal template selection
+    void applyModalTemplate(int templateIndex, float fundamentalHz);
+    int getCurrentTemplateIndex() const { return currentTemplateIndex; }
+
     // Global master gain
     void setMasterGainDb(float db);
     float getMasterGainDb() const { return masterGainDb; }
@@ -41,6 +50,7 @@ private:
     std::array<SpreadVoiceResonator, kNumResonators> resonators;
 
     float masterGainDb = 0.0f;
+    int currentTemplateIndex = -1; // -1 = no template (manual)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ResonatorBank)
 };

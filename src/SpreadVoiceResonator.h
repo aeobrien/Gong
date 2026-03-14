@@ -90,6 +90,14 @@ public:
     float getPanWidthEnergyAmount() const { return panWidthEnergyAmount; }
     float getFrequencyBendEnergyAmount() const { return frequencyBendEnergyAmount; }
 
+    // Step 6: Nonlinear pitch glide
+    void setPitchGlideDirection(float dir);   // +1.0 = hardening, -1.0 = softening
+    float getPitchGlideDirection() const { return glideDirection; }
+    void setPitchGlideSensitivity(float cents);
+    float getPitchGlideSensitivity() const { return glideSensitivity; }
+    void setPitchGlideSmoothing(float coeff);
+    float getPitchGlideSmoothing() const { return glideSmoothing; }
+
     // Enable/disable
     void setEnabled(bool enabled) { isEnabled = enabled; }
     bool getEnabled() const { return isEnabled; }
@@ -130,6 +138,12 @@ private:
     float spreadDetuneEnergyAmount = 0.2f;
     float panWidthEnergyAmount = 0.3f;
     float frequencyBendEnergyAmount = 0.0f;  // Subtle
+
+    // Step 6: Nonlinear pitch glide
+    float glideDirection = 1.0f;      // +1 = hardening (pitch up), -1 = softening (pitch down)
+    float glideSensitivity = 80.0f;   // Cents per unit energy
+    float glideSmoothing = 0.05f;     // One-pole smoothing coefficient
+    float currentBend = 0.0f;         // Current smoothed bend in cents
 
     // Calculated per-voice values
     std::array<float, kNumVoices> voiceGains;

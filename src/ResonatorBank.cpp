@@ -114,3 +114,35 @@ void ResonatorBank::setMasterGainDb(float db)
 {
     masterGainDb = juce::jlimit(-24.0f, 24.0f, db);
 }
+
+void ResonatorBank::setAllPitchGlideDirection(float dir)
+{
+    for (int i = 0; i < kNumResonators; ++i)
+        resonators[i].setPitchGlideDirection(dir);
+}
+
+void ResonatorBank::setAllPitchGlideSensitivity(float cents)
+{
+    for (int i = 0; i < kNumResonators; ++i)
+        resonators[i].setPitchGlideSensitivity(cents);
+}
+
+void ResonatorBank::applyModalTemplate(int templateIndex, float fundamentalHz)
+{
+    if (templateIndex < 0 || templateIndex >= kNumTemplates)
+    {
+        currentTemplateIndex = -1;
+        return;
+    }
+
+    currentTemplateIndex = templateIndex;
+    const auto& tmpl = *kAllTemplates[templateIndex];
+
+    // Set 4 resonators to the first 4 modal ratios from the template
+    for (int i = 0; i < kNumResonators; ++i)
+    {
+        float freq = fundamentalHz * tmpl.ratios[i];
+        resonators[i].setFrequencyMode(SpreadVoiceResonator::FrequencyMode::Free);
+        resonators[i].setFrequencyHz(freq);
+    }
+}

@@ -27,6 +27,7 @@ public:
 
     // Get the current descriptor (updated by CCs, velocity/padId set on Note On)
     const StrikeDescriptor& getCurrentDescriptor() const { return descriptor; }
+    bool isDampingActive() const { return dampingActive; }
 
     // CC mapping configuration
     void setAttackSlopeCC(int cc)       { attackSlopeCC = cc; }
@@ -47,6 +48,9 @@ private:
     int spectralCentroidCC = 74; // Brightness (MPE)
     int hfEnergyRatioCC = 71;   // Timbre (MPE)
     int decayShapeCC = 73;       // Attack time
+
+    // Damping state (toggled by CC64 sustain pedal)
+    bool dampingActive = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MidiControllerMock)
 };

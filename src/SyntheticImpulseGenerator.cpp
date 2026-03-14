@@ -46,8 +46,14 @@ void SyntheticImpulseGenerator::process(juce::AudioBuffer<float>& buffer)
         float velNorm = desc.velocityNorm();
         amplitude = std::pow(velNorm, 2.0f);
 
-        // Attack phase: attackSlope 255 = 1 sample, 0 = ~3ms ramp
-        float attackMs = (1.0f - desc.attackSlopeNorm()) * 3.0f;
+        // Step 9: Hertz contact law - velocity-dependent contact time
+        // Contact time inversely proportional to velocity (harder = shorter = brighter)
+        float baseContactTimeMs = 2.0f;
+        float velocityForContact = std::max(0.01f, velNorm);
+        float contactTimeMs = baseContactTimeMs * std::pow(velocityForContact, -0.2f);
+
+        // Attack phase influenced by both attackSlope CC and contact time
+        float attackMs = (1.0f - desc.attackSlopeNorm()) * contactTimeMs;
         attackSamples = std::max(1, static_cast<int>(attackMs * sampleRate / 1000.0));
 
         // Decay phase: decayShape 0 = ~0.5ms, 255 = ~5ms
@@ -60,10 +66,17 @@ void SyntheticImpulseGenerator::process(juce::AudioBuffer<float>& buffer)
         // HF energy ratio: mix between filtered and unfiltered noise
         hfMix = desc.hfEnergyRatioNorm();
 
+        // Step 9: Velocity-dependent filter cutoff (Hertz contact law)
+        // Bandwidth proportional to 1/contactTime - harder strikes = brighter
+        float bandwidthHz = 1000.0f / contactTimeMs;
+        float baseCutoff = desc.spectralCentroidHz();
+        // Blend base cutoff with velocity-derived bandwidth
+        float velocityCutoff = baseCutoff + bandwidthHz * velNorm;
+
         // Configure filter
         if (filterPrepared)
         {
-            float cutoff = juce::jlimit(200.0f, 15000.0f, desc.spectralCentroidHz());
+            float cutoff = juce::jlimit(200.0f, 15000.0f, velocityCutoff);
             noiseFilter.setCutoffFrequency(cutoff);
 
             // Q varies with hfEnergyRatio: low ratio = higher Q for more resonant filtering

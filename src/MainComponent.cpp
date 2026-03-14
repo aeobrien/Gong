@@ -3,7 +3,7 @@
 
 MainComponent::MainComponent()
 {
-    setSize(1000, 1000);
+    setSize(1050, 1250);
 
     // Resolve directories relative to source
     sourceDirectory = juce::File(__FILE__).getParentDirectory().getParentDirectory();
@@ -285,6 +285,89 @@ MainComponent::MainComponent()
     addAndMakeVisible(presetSaveAsButton);
     presetSaveAsButton.addListener(this);
 
+    // === NONLINEAR DYNAMICS CONTROLS ===
+    addAndMakeVisible(couplingRateLabel);
+    addAndMakeVisible(couplingRateSlider);
+    couplingRateSlider.setRange(0.0, 0.01, 0.0001);
+    couplingRateSlider.setValue(0.001);
+    couplingRateSlider.addListener(this);
+
+    addAndMakeVisible(bloomThreshLabel);
+    addAndMakeVisible(bloomThreshSlider);
+    bloomThreshSlider.setRange(0.1, 1.0, 0.01);
+    bloomThreshSlider.setValue(0.7);
+    bloomThreshSlider.addListener(this);
+
+    addAndMakeVisible(glideDirectionLabel);
+    addAndMakeVisible(glideDirectionSlider);
+    glideDirectionSlider.setRange(-1.0, 1.0, 0.01);
+    glideDirectionSlider.setValue(1.0);
+    glideDirectionSlider.addListener(this);
+
+    addAndMakeVisible(glideSensitivityLabel);
+    addAndMakeVisible(glideSensitivitySlider);
+    glideSensitivitySlider.setRange(0.0, 200.0, 1.0);
+    glideSensitivitySlider.setValue(80.0);
+    glideSensitivitySlider.addListener(this);
+
+    addAndMakeVisible(postConvLowLabel);
+    addAndMakeVisible(postConvLowSlider);
+    postConvLowSlider.setRange(-12.0, 12.0, 0.1);
+    postConvLowSlider.setValue(0.0);
+    postConvLowSlider.addListener(this);
+
+    addAndMakeVisible(postConvMidLabel);
+    addAndMakeVisible(postConvMidSlider);
+    postConvMidSlider.setRange(-12.0, 12.0, 0.1);
+    postConvMidSlider.setValue(0.0);
+    postConvMidSlider.addListener(this);
+
+    addAndMakeVisible(postConvHighLabel);
+    addAndMakeVisible(postConvHighSlider);
+    postConvHighSlider.setRange(-12.0, 12.0, 0.1);
+    postConvHighSlider.setValue(0.0);
+    postConvHighSlider.addListener(this);
+
+    addAndMakeVisible(modalTemplateLabel);
+    addAndMakeVisible(modalTemplateCombo);
+    modalTemplateCombo.addItem("Manual", 1);
+    for (int i = 0; i < kNumTemplates; ++i)
+        modalTemplateCombo.addItem(kAllTemplates[i]->name, i + 2);
+    modalTemplateCombo.setSelectedId(1, juce::dontSendNotification);
+    modalTemplateCombo.addListener(this);
+
+    addAndMakeVisible(loadIRBButton);
+    loadIRBButton.addListener(this);
+    addAndMakeVisible(irBFileLabel);
+
+    // Section enable toggles
+    addAndMakeVisible(convSectionToggle);
+    convSectionToggle.setToggleState(true, juce::dontSendNotification);
+    convSectionToggle.addListener(this);
+    convSectionToggle.setTooltip("Enable/disable convolution reverb processing");
+
+    addAndMakeVisible(nlSectionToggle);
+    nlSectionToggle.setToggleState(true, juce::dontSendNotification);
+    nlSectionToggle.addListener(this);
+    nlSectionToggle.setTooltip("Enable/disable nonlinear dynamics (coupling, bloom, pitch glide)");
+
+    addAndMakeVisible(macroSectionToggle);
+    macroSectionToggle.setToggleState(true, juce::dontSendNotification);
+    macroSectionToggle.addListener(this);
+    macroSectionToggle.setTooltip("Enable/disable macro parameter offsets");
+
+    // Macro knobs
+    static const char* macroNames[] = { "Size", "Material", "Intensity", "Space" };
+    for (int i = 0; i < 4; ++i)
+    {
+        macroLabels[i].setText(macroNames[i], juce::dontSendNotification);
+        addAndMakeVisible(macroLabels[i]);
+        addAndMakeVisible(macroSliders[i]);
+        macroSliders[i].setRange(0.0, 1.0, 0.01);
+        macroSliders[i].setValue(0.5);
+        macroSliders[i].addListener(this);
+    }
+
     // === BOTTOM CONTROLS ===
     addAndMakeVisible(volumeLabel);
     addAndMakeVisible(volumeSlider);
@@ -294,6 +377,9 @@ MainComponent::MainComponent()
 
     addAndMakeVisible(panicButton);
     panicButton.addListener(this);
+
+    addAndMakeVisible(diagnosticsButton);
+    diagnosticsButton.addListener(this);
 
     // Setup tooltips
     setupTooltips();
@@ -477,6 +563,8 @@ MainComponent::~MainComponent()
 {
     stopTimer();
 
+    diagnosticWindow.reset();
+
     if (performanceServer)
         performanceServer->stopServer();
 
@@ -573,6 +661,30 @@ void MainComponent::sliderValueChanged(juce::Slider* slider)
         multibandCompressor.setAllAttacks(static_cast<float>(compAttackSlider.getValue()));
     else if (slider == &compReleaseSlider)
         multibandCompressor.setAllReleases(static_cast<float>(compReleaseSlider.getValue()));
+    // Nonlinear dynamics
+    else if (slider == &couplingRateSlider)
+        gongSynth.getEnergyAccumulator().setCouplingRate(static_cast<float>(couplingRateSlider.getValue()));
+    else if (slider == &bloomThreshSlider)
+        gongSynth.getEnergyAccumulator().setBloomThreshold(static_cast<float>(bloomThreshSlider.getValue()));
+    else if (slider == &glideDirectionSlider)
+        gongSynth.getResonatorBank().setAllPitchGlideDirection(static_cast<float>(glideDirectionSlider.getValue()));
+    else if (slider == &glideSensitivitySlider)
+        gongSynth.getResonatorBank().setAllPitchGlideSensitivity(static_cast<float>(glideSensitivitySlider.getValue()));
+    else if (slider == &postConvLowSlider)
+        convolutionEngine.setPostConvLowGainDb(static_cast<float>(postConvLowSlider.getValue()));
+    else if (slider == &postConvMidSlider)
+        convolutionEngine.setPostConvMidGainDb(static_cast<float>(postConvMidSlider.getValue()));
+    else if (slider == &postConvHighSlider)
+        convolutionEngine.setPostConvHighGainDb(static_cast<float>(postConvHighSlider.getValue()));
+    // Macro knobs
+    else if (slider == &macroSliders[0])
+        macroParameters.setMacro(0, static_cast<float>(macroSliders[0].getValue()));
+    else if (slider == &macroSliders[1])
+        macroParameters.setMacro(1, static_cast<float>(macroSliders[1].getValue()));
+    else if (slider == &macroSliders[2])
+        macroParameters.setMacro(2, static_cast<float>(macroSliders[2].getValue()));
+    else if (slider == &macroSliders[3])
+        macroParameters.setMacro(3, static_cast<float>(macroSliders[3].getValue()));
     // Volume
     else if (slider == &volumeSlider)
         masterGain = static_cast<float>(volumeSlider.getValue());
@@ -637,12 +749,46 @@ void MainComponent::buttonClicked(juce::Button* button)
     {
         gongSynth.setExcitationMode(GongSynthesizer::ExcitationMode::SyntheticImpulse);
     }
+    else if (button == &convSectionToggle)
+    {
+        bool on = convSectionToggle.getToggleState();
+        diagnosticState.convState.store(on ? 0 : 2, std::memory_order_relaxed);
+    }
+    else if (button == &nlSectionToggle)
+    {
+        nlDynamicsEnabled.store(nlSectionToggle.getToggleState(), std::memory_order_relaxed);
+    }
+    else if (button == &macroSectionToggle)
+    {
+        macrosEnabled.store(macroSectionToggle.getToggleState(), std::memory_order_relaxed);
+    }
+    else if (button == &loadIRBButton)
+    {
+        auto* chooser = new juce::FileChooser("Select IR B file...", irDirectory, "*.wav;*.aif;*.aiff;*.flac");
+        auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
+        chooser->launchAsync(flags, [this, chooser](const juce::FileChooser& fc) {
+            auto file = fc.getResult();
+            if (file.existsAsFile())
+            {
+                convolutionEngine.loadImpulseResponseB(file);
+                irBFileLabel.setText(file.getFileName(), juce::dontSendNotification);
+            }
+            delete chooser;
+        });
+    }
+    else if (button == &diagnosticsButton)
+    {
+        if (!diagnosticWindow || !diagnosticWindow->isVisible())
+            diagnosticWindow = std::make_unique<DiagnosticWindow>(diagnosticState);
+        else
+            diagnosticWindow->setVisible(true);
+    }
     else if (button == &presetSaveButton)
     {
         auto name = presetManager.getCurrentPresetName();
         if (name.isEmpty())
             name = "Untitled";
-        presetManager.savePreset(name, gongSynth, convolutionEngine, exciterProcessor, multibandCompressor, masterGain);
+        presetManager.savePreset(name, gongSynth, convolutionEngine, exciterProcessor, multibandCompressor, masterGain, &diagnosticState);
         updatePresetComboBox();
     }
     else if (button == &presetSaveAsButton)
@@ -650,7 +796,7 @@ void MainComponent::buttonClicked(juce::Button* button)
         auto callback = [this](const juce::String& name) {
             if (name.isNotEmpty())
             {
-                presetManager.savePreset(name, gongSynth, convolutionEngine, exciterProcessor, multibandCompressor, masterGain);
+                presetManager.savePreset(name, gongSynth, convolutionEngine, exciterProcessor, multibandCompressor, masterGain, &diagnosticState);
                 updatePresetComboBox();
             }
         };
@@ -709,13 +855,28 @@ void MainComponent::comboBoxChanged(juce::ComboBox* comboBox)
     {
         setMidiInput(midiInputList.getSelectedItemIndex());
     }
+    else if (comboBox == &modalTemplateCombo)
+    {
+        int id = modalTemplateCombo.getSelectedId();
+        if (id == 1)
+        {
+            // Manual mode - no template
+        }
+        else
+        {
+            int templateIdx = id - 2;
+            float fundamental = gongSynth.getResonatorBank().getResonator(0).getEffectiveFrequency();
+            gongSynth.getResonatorBank().applyModalTemplate(templateIdx, fundamental);
+            updateUIFromState();
+        }
+    }
     else if (comboBox == &presetComboBox)
     {
         auto selectedName = presetComboBox.getText();
         if (selectedName.isNotEmpty())
         {
             if (presetManager.loadPreset(selectedName, gongSynth, convolutionEngine,
-                                          exciterProcessor, multibandCompressor, masterGain))
+                                          exciterProcessor, multibandCompressor, masterGain, &diagnosticState))
             {
                 updateUIFromState();
                 if (convolutionEngine.isLoaded())
@@ -773,6 +934,10 @@ void MainComponent::loadIRFile()
 void MainComponent::timerCallback()
 {
     currentGlobalEnergy = gongSynth.getEnergyAccumulator().getNormalizedGlobalEnergy();
+
+    if (diagnosticWindow)
+        diagnosticWindow->refresh();
+
     repaint();
 }
 
@@ -807,6 +972,12 @@ void MainComponent::prepareToPlay(int samplesPerBlockExpected, double sampleRate
 
     synthBuffer.setSize(2, samplesPerBlockExpected);
     audioInputBuffer.setSize(2, samplesPerBlockExpected);
+    testBuffer.setSize(2, samplesPerBlockExpected);
+
+    testSignalGenerator.prepare(sampleRate);
+    modulationBus.prepare(sampleRate);
+    diagnosticState.budgetUs.store(static_cast<float>(1000000.0 * samplesPerBlockExpected / sampleRate),
+                                    std::memory_order_relaxed);
 
     double budgetMs = 1000.0 * samplesPerBlockExpected / sampleRate;
     juce::Logger::writeToLog("AUDIO SETUP: sampleRate=" + juce::String(sampleRate)
@@ -839,6 +1010,8 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
         synthBuffer.setSize(numOutputChannels, numSamples, false, false, true);
     if (audioInputBuffer.getNumChannels() < 2 || audioInputBuffer.getNumSamples() < numSamples)
         audioInputBuffer.setSize(2, numSamples, false, false, true);
+    if (testBuffer.getNumChannels() < 2 || testBuffer.getNumSamples() < numSamples)
+        testBuffer.setSize(2, numSamples, false, false, true);
 
     auto* inputChannelData = bufferToFill.buffer->getArrayOfReadPointers();
     audioInputBuffer.copyFrom(0, 0, inputChannelData[0] + bufferToFill.startSample, numSamples);
@@ -850,16 +1023,59 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
 
     currentInputLevel = audioInputBuffer.getMagnitude(0, numSamples);
 
+    // 1. Meter input
+    diagnosticState.input.update(audioInputBuffer, 0, numSamples);
+
+    // 2. Modulation
+    modulationBus.computeBlock(diagnosticState, numSamples);
+    applyModulationOffsets();
+
+    // 3. Test signal injection helper
+    int testType = diagnosticState.testSignalType.load(std::memory_order_relaxed);
+    int testPoint = diagnosticState.testInjectionPoint.load(std::memory_order_relaxed);
+    float testGain = diagnosticState.testSignalGain.load(std::memory_order_relaxed);
+    float testFreq = diagnosticState.testSineFreq.load(std::memory_order_relaxed);
+
+    auto injectTestSignal = [&](juce::AudioBuffer<float>& buf, int atPoint) {
+        if (testType > 0 && testPoint == atPoint)
+        {
+            testBuffer.clear(0, numSamples);
+            testSignalGenerator.generateBlock(testBuffer, numSamples, testType, testGain, testFreq);
+            for (int ch = 0; ch < buf.getNumChannels() && ch < 2; ++ch)
+                buf.addFrom(ch, 0, testBuffer, ch, 0, numSamples);
+        }
+    };
+
+    // Inject at input point
+    injectTestSignal(audioInputBuffer, 0);
+
+    // Bypass/Solo/Mute logic
+    bool anySoloed = diagnosticState.isAnySoloed();
+    int synthEff = diagnosticState.getEffectiveState(
+        diagnosticState.synthState.load(std::memory_order_relaxed), anySoloed);
+    int convEff = diagnosticState.getEffectiveState(
+        diagnosticState.convState.load(std::memory_order_relaxed), anySoloed);
+    int exciterEff = diagnosticState.getEffectiveState(
+        diagnosticState.exciterState.load(std::memory_order_relaxed), anySoloed);
+    int compEff = diagnosticState.getEffectiveState(
+        diagnosticState.compState.load(std::memory_order_relaxed), anySoloed);
+
     synthBuffer.clear();
 
+    // 4. Synth
     auto t0 = std::chrono::steady_clock::now();
 
-    gongSynth.process(synthBuffer, audioInputBuffer, midiBuffer, numSamples);
+    if (synthEff != 2) // not bypassed
+        gongSynth.process(synthBuffer, audioInputBuffer, midiBuffer, numSamples);
+    if (synthEff == 1) // muted
+        synthBuffer.clear(0, numSamples);
 
     auto t1 = std::chrono::steady_clock::now();
+    auto synthUs = static_cast<float>(std::chrono::duration<double, std::micro>(t1 - t0).count());
+    diagnosticState.synthTime.record(synthUs);
+    diagnosticState.afterSynth.update(synthBuffer, 0, numSamples);
 
-    debugLevelAfterSynth = synthBuffer.getMagnitude(0, 0, numSamples);
-
+    // Copy synth output to main buffer
     for (int channel = 0; channel < static_cast<int>(numOutputChannels); ++channel)
         bufferToFill.buffer->copyFrom(channel, bufferToFill.startSample, synthBuffer, channel, 0, numSamples);
 
@@ -868,53 +1084,171 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
                                            bufferToFill.startSample,
                                            numSamples);
 
-    convolutionEngine.process(processBuffer);
+    // Inject after synth
+    injectTestSignal(processBuffer, 1);
+
+    // 5. Convolution
+    auto t2start = std::chrono::steady_clock::now();
+
+    if (convEff != 2)
+        convolutionEngine.process(processBuffer);
+    if (convEff == 1)
+        processBuffer.clear(0, numSamples);
 
     auto t2 = std::chrono::steady_clock::now();
+    auto convUs = static_cast<float>(std::chrono::duration<double, std::micro>(t2 - t2start).count());
+    diagnosticState.convTime.record(convUs);
+    diagnosticState.afterConv.update(processBuffer, 0, numSamples);
 
-    debugLevelAfterConv = processBuffer.getMagnitude(0, 0, numSamples);
+    // Inject after conv
+    injectTestSignal(processBuffer, 2);
 
-    exciterProcessor.process(processBuffer);
+    // 6. Exciter
+    auto t3start = std::chrono::steady_clock::now();
+
+    if (exciterEff != 2)
+        exciterProcessor.process(processBuffer);
+    if (exciterEff == 1)
+        processBuffer.clear(0, numSamples);
 
     auto t3 = std::chrono::steady_clock::now();
+    auto exciterUs = static_cast<float>(std::chrono::duration<double, std::micro>(t3 - t3start).count());
+    diagnosticState.exciterTime.record(exciterUs);
+    diagnosticState.afterExciter.update(processBuffer, 0, numSamples);
 
-    debugLevelAfterExciter = processBuffer.getMagnitude(0, 0, numSamples);
+    // Inject after exciter
+    injectTestSignal(processBuffer, 3);
 
-    multibandCompressor.process(processBuffer);
+    // 7. Compressor
+    auto t4start = std::chrono::steady_clock::now();
+
+    if (compEff != 2)
+        multibandCompressor.process(processBuffer);
+    if (compEff == 1)
+        processBuffer.clear(0, numSamples);
 
     auto t4 = std::chrono::steady_clock::now();
+    auto compUs = static_cast<float>(std::chrono::duration<double, std::micro>(t4 - t4start).count());
+    diagnosticState.compTime.record(compUs);
+    diagnosticState.afterComp.update(processBuffer, 0, numSamples);
 
-    debugLevelAfterComp = processBuffer.getMagnitude(0, 0, numSamples);
-
+    // 8. Master gain
     bufferToFill.buffer->applyGain(bufferToFill.startSample, numSamples, masterGain);
-    debugLevelFinal = bufferToFill.buffer->getMagnitude(0, bufferToFill.startSample, numSamples);
 
-    // Periodic timing diagnostics (every ~2 seconds)
-    static int timingCounter = 0;
-    static double maxSynthUs = 0, maxConvUs = 0, maxExciterUs = 0, maxCompUs = 0, maxTotalUs = 0;
+    // 9. Output metering
+    diagnosticState.output.update(*bufferToFill.buffer, bufferToFill.startSample, numSamples);
 
-    auto synthUs = std::chrono::duration<double, std::micro>(t1 - t0).count();
-    auto convUs = std::chrono::duration<double, std::micro>(t2 - t1).count();
-    auto exciterUs = std::chrono::duration<double, std::micro>(t3 - t2).count();
-    auto compUs = std::chrono::duration<double, std::micro>(t4 - t3).count();
-    auto totalUs = std::chrono::duration<double, std::micro>(t4 - t0).count();
+    // 10. Total timing
+    auto totalUs = static_cast<float>(std::chrono::duration<double, std::micro>(t4 - t0).count());
+    diagnosticState.totalTimeUs.store(totalUs, std::memory_order_relaxed);
 
-    maxSynthUs = std::max(maxSynthUs, synthUs);
-    maxConvUs = std::max(maxConvUs, convUs);
-    maxExciterUs = std::max(maxExciterUs, exciterUs);
-    maxCompUs = std::max(maxCompUs, compUs);
-    maxTotalUs = std::max(maxTotalUs, totalUs);
+    // 11. Energy values
+    auto& ea = gongSynth.getEnergyAccumulator();
+    diagnosticState.globalEnergy.store(ea.getNormalizedGlobalEnergy(), std::memory_order_relaxed);
+    for (int i = 0; i < 4; ++i)
+        diagnosticState.bandEnergy[i].store(ea.getNormalizedBandEnergy(i), std::memory_order_relaxed);
+}
 
-    if (++timingCounter >= 188)  // ~2s at 48kHz/512
+void MainComponent::applyModulationOffsets()
+{
+    auto get = [this](ModTarget t) { return modulationBus.getOffset(t); };
+    auto& specs = getTargetSpecs();
+
+    auto clamp = [&](ModTarget t, float base) {
+        float offset = get(t);
+        int idx = static_cast<int>(t);
+        return juce::jlimit(specs[idx].minVal, specs[idx].maxVal, base + offset);
+    };
+
+    // Convolution
+    float convMixBase = static_cast<float>(reverbMixSlider.getValue());
+    float convGainBase = static_cast<float>(convGainSlider.getValue());
+    convolutionEngine.setWetDryMix(clamp(ModTarget::ConvMix, convMixBase));
+    convolutionEngine.setOutputGainDb(clamp(ModTarget::ConvGain, convGainBase));
+
+    // Exciter
+    float excFreqBase = static_cast<float>(exciterFreqSlider.getValue());
+    float excDriveBase = static_cast<float>(exciterDriveSlider.getValue());
+    float excMixBase = static_cast<float>(exciterMixSlider.getValue());
+    exciterProcessor.setHighpassFrequency(clamp(ModTarget::ExciterFreq, excFreqBase));
+    exciterProcessor.setSaturationDrive(clamp(ModTarget::ExciterDrive, excDriveBase));
+    exciterProcessor.setDryWetMix(clamp(ModTarget::ExciterMix, excMixBase));
+    exciterProcessor.setOutputGainDb(clamp(ModTarget::ExciterOutputGain, exciterProcessor.getOutputGainDb()));
+
+    // Compressor
+    float compThreshBase = static_cast<float>(compThreshSlider.getValue());
+    float compRatioBase = static_cast<float>(compRatioSlider.getValue());
+    float compAttackBase = static_cast<float>(compAttackSlider.getValue());
+    float compReleaseBase = static_cast<float>(compReleaseSlider.getValue());
+    multibandCompressor.setAllThresholds(clamp(ModTarget::CompThreshold, compThreshBase));
+    multibandCompressor.setAllRatios(clamp(ModTarget::CompRatio, compRatioBase));
+    multibandCompressor.setAllAttacks(clamp(ModTarget::CompAttack, compAttackBase));
+    multibandCompressor.setAllReleases(clamp(ModTarget::CompRelease, compReleaseBase));
+
+    // Synth
+    float decayBase = static_cast<float>(globalDecaySlider.getValue());
+    float brightBase = static_cast<float>(globalBrightnessSlider.getValue());
+    float spreadBase = static_cast<float>(globalSpreadLevelSlider.getValue());
+    float panBase = static_cast<float>(globalSpreadPanWidthSlider.getValue());
+    gongSynth.setGlobalDecayTime(clamp(ModTarget::SynthDecay, decayBase));
+    gongSynth.setGlobalBrightness(clamp(ModTarget::SynthBrightness, brightBase));
+    gongSynth.setGlobalSpreadLevel(clamp(ModTarget::SynthSpreadLevel, spreadBase));
+    gongSynth.setGlobalSpreadPanWidth(clamp(ModTarget::SynthSpreadPanWidth, panBase));
+
+    // Energy
+    float eDecayBase = static_cast<float>(energyDecaySlider.getValue());
+    float eInjBase = static_cast<float>(energyInjectionSlider.getValue());
+    float ePowBase = static_cast<float>(energyPowerSlider.getValue());
+    auto& ea = gongSynth.getEnergyAccumulator();
+    ea.setGlobalDecayMs(clamp(ModTarget::EnergyDecayMs, eDecayBase));
+    ea.setInjectionGain(clamp(ModTarget::EnergyInjectionGain, eInjBase));
+    ea.setInjectionPower(clamp(ModTarget::EnergyInjectionPower, ePowBase));
+
+    // Roll prime level (Step 4)
+    float rollBase = ea.getRollPrimeLevel();
+    ea.setRollPrimeLevel(clamp(ModTarget::RollPrimeLevel, rollBase));
+
+    // Nonlinear dynamics (only when enabled)
+    if (nlDynamicsEnabled.load(std::memory_order_relaxed))
     {
-        double budgetUs = 1000000.0 * numSamples / currentSampleRate;
-        juce::Logger::writeToLog("TIMING (max us over 2s): synth="
-            + juce::String(maxSynthUs, 0) + " conv=" + juce::String(maxConvUs, 0)
-            + " exciter=" + juce::String(maxExciterUs, 0) + " comp=" + juce::String(maxCompUs, 0)
-            + " total=" + juce::String(maxTotalUs, 0) + " budget=" + juce::String(budgetUs, 0));
-        timingCounter = 0;
-        maxSynthUs = maxConvUs = maxExciterUs = maxCompUs = maxTotalUs = 0;
+        // Pitch glide (Step 6) - modulation offsets
+        float glideDir = static_cast<float>(glideDirectionSlider.getValue()) + get(ModTarget::PitchGlideDirection);
+        float glideSens = static_cast<float>(glideSensitivitySlider.getValue()) + get(ModTarget::PitchGlideSensitivity);
+        gongSynth.getResonatorBank().setAllPitchGlideDirection(juce::jlimit(-1.0f, 1.0f, glideDir));
+        gongSynth.getResonatorBank().setAllPitchGlideSensitivity(juce::jlimit(0.0f, 200.0f, glideSens));
     }
+    else
+    {
+        // Bypass: zero out nonlinear effects
+        gongSynth.getResonatorBank().setAllPitchGlideSensitivity(0.0f);
+        ea.setCouplingRate(0.0f);
+        ea.setBloomThreshold(1.0f);
+    }
+
+    // Post-conv EQ (Step 8) - modulation offsets
+    float postLow = static_cast<float>(postConvLowSlider.getValue()) + get(ModTarget::PostConvLowGain);
+    float postMid = static_cast<float>(postConvMidSlider.getValue()) + get(ModTarget::PostConvMidGain);
+    float postHigh = static_cast<float>(postConvHighSlider.getValue()) + get(ModTarget::PostConvHighGain);
+    convolutionEngine.setPostConvLowGainDb(juce::jlimit(-12.0f, 12.0f, postLow));
+    convolutionEngine.setPostConvMidGainDb(juce::jlimit(-12.0f, 12.0f, postMid));
+    convolutionEngine.setPostConvHighGainDb(juce::jlimit(-12.0f, 12.0f, postHigh));
+
+    // Step 14: IR crossfade driven by energy
+    float globalEnergy = ea.getNormalizedGlobalEnergy();
+    convolutionEngine.setIRCrossfadeEnergy(globalEnergy);
+
+    // Step 15: Apply macro offsets (only when enabled)
+    if (macrosEnabled.load(std::memory_order_relaxed))
+    {
+        ea.setInjectionGain(juce::jlimit(0.1f, 5.0f, ea.getInjectionGain() + macroParameters.getInjectionGainOffset()));
+        ea.setBloomThreshold(juce::jlimit(0.1f, 1.0f, ea.getBloomThreshold() + macroParameters.getBloomThresholdOffset()));
+        gongSynth.getCrashNoiseGenerator().setThreshold(
+            juce::jlimit(0.1f, 1.0f, gongSynth.getCrashNoiseGenerator().getThreshold() + macroParameters.getCrashThresholdOffset()));
+    }
+
+    // Master gain
+    float mgBase = static_cast<float>(volumeSlider.getValue());
+    masterGain = clamp(ModTarget::MasterGain, mgBase);
 }
 
 void MainComponent::releaseResources()
@@ -935,7 +1269,7 @@ juce::StringArray MainComponent::getPresetNames()
 bool MainComponent::activatePreset(const juce::String& name)
 {
     if (presetManager.loadPreset(name, gongSynth, convolutionEngine,
-                                  exciterProcessor, multibandCompressor, masterGain))
+                                  exciterProcessor, multibandCompressor, masterGain, &diagnosticState))
     {
         updateUIFromState();
         updatePresetComboBox();
@@ -993,84 +1327,93 @@ void MainComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff1e1e1e));
 
-    auto area = getLocalBounds();
-    int margin = 10;
-
     // Title
-    auto titleArea = area.removeFromTop(35);
     g.setFont(juce::FontOptions(20.0f).withStyle("Bold"));
     g.setColour(juce::Colours::white);
-    g.drawText("GONG ENERGY SYNTHESIZER", titleArea, juce::Justification::centred, true);
+    g.drawText("GONG ENERGY SYNTHESIZER", getLocalBounds().removeFromTop(35), juce::Justification::centred);
 
-    auto contentArea = getLocalBounds().reduced(margin);
-    contentArea.removeFromTop(35);
-
-    // MIDI row
-    contentArea.removeFromTop(32);
-
-    auto drawSection = [&](juce::Rectangle<int> bounds, const juce::String& title) {
-        g.setColour(juce::Colour(0xff2a2a2a));
-        g.fillRoundedRectangle(bounds.toFloat(), 5.0f);
-        g.setColour(juce::Colour(0xff444444));
-        g.drawRoundedRectangle(bounds.toFloat().reduced(0.5f), 5.0f, 1.0f);
-        g.setColour(juce::Colours::white.withAlpha(0.8f));
-        g.setFont(juce::FontOptions(12.0f).withStyle("Bold"));
-        g.drawText(title, bounds.removeFromTop(20).reduced(8, 2), juce::Justification::centredLeft);
+    // Section definitions: bounds, title, description, enabled
+    struct SectionDraw {
+        juce::Rectangle<int> bounds;
+        const char* title;
+        const char* description;
+        bool enabled;
     };
 
-    // Input Section
-    auto inputArea = contentArea.removeFromTop(55);
-    drawSection(inputArea, "INPUT / STRIKE DETECTION");
+    SectionDraw sections[] = {
+        { inputSectionBounds,     "INPUT / STRIKE DETECTION",
+          "Mic/line input -> strike detection -> energy injection. Controls how audio triggers the energy system.", true },
+        { energySectionBounds,    "ENERGY ACCUMULATOR",
+          "Leaky integrator: strikes inject energy that decays over time and modulates resonator behavior.", true },
+        { resonatorSectionBounds, "RESONATOR BANK (4 x 7 voices)",
+          "4 modal resonators with 7 spread voices each. Energy modulates brightness, spread, detuning, and stereo width.", true },
+        { convSectionBounds,      "CONVOLUTION REVERB",
+          "IR-based reverb with dual-IR energy crossfade and post-convolution 3-band EQ for tonal shaping.",
+          convSectionToggle.getToggleState() },
+        { nlSectionBounds,        "NONLINEAR DYNAMICS",
+          "Inter-band energy coupling, power-law bloom cascade, pitch glide under stress -- nonlinear gong physics.",
+          nlSectionToggle.getToggleState() },
+        { outputSectionBounds,    "OUTPUT PROCESSING",
+          "Harmonic exciter (HP filter + saturation) and 3-band multiband compressor for final shaping.", true },
+        { macroSectionBounds,     "MACRO CONTROLS",
+          "4 high-level knobs (Size, Material, Intensity, Space) controlling multiple parameters simultaneously.",
+          macroSectionToggle.getToggleState() },
+        { presetSectionBounds,    "PRESETS", "", true },
+    };
 
-    contentArea.removeFromTop(5);
+    for (auto& s : sections)
+    {
+        if (s.bounds.isEmpty()) continue;
 
-    // Energy Section
-    auto energyArea = contentArea.removeFromTop(55);
-    drawSection(energyArea, "ENERGY ACCUMULATOR");
+        float alpha = s.enabled ? 1.0f : 0.4f;
 
-    auto meterRect = juce::Rectangle<int>(energyArea.getRight() - 120, energyArea.getY() + 25, 100, 14);
-    g.setColour(juce::Colours::black);
-    g.fillRect(meterRect);
-    g.setColour(juce::Colour(0xffff8800));
-    g.fillRect(meterRect.withWidth(static_cast<int>(currentGlobalEnergy * meterRect.getWidth())));
-    g.setColour(juce::Colours::grey);
-    g.drawRect(meterRect);
+        // Background
+        g.setColour(juce::Colour(0xff2a2a2a));
+        g.fillRoundedRectangle(s.bounds.toFloat(), 5.0f);
+        g.setColour(s.enabled ? juce::Colour(0xff444444) : juce::Colour(0xff333333));
+        g.drawRoundedRectangle(s.bounds.toFloat().reduced(0.5f), 5.0f, 1.0f);
 
-    contentArea.removeFromTop(5);
+        // Title
+        auto titleRect = s.bounds.withHeight(22).reduced(8, 2);
+        g.setColour(juce::Colours::white.withAlpha(0.9f * alpha));
+        g.setFont(juce::FontOptions(13.0f).withStyle("Bold"));
+        g.drawText(s.title, titleRect, juce::Justification::centredLeft);
 
-    // Resonator Section
-    auto resonatorArea = contentArea.removeFromTop(300);
-    drawSection(resonatorArea, "RESONATOR BANK (4 resonators x 7 voices each)");
+        // Description
+        if (s.description[0] != '\0')
+        {
+            auto descRect = s.bounds.reduced(8, 0);
+            descRect.removeFromTop(20);
+            g.setColour(juce::Colours::white.withAlpha(0.35f * alpha));
+            g.setFont(juce::FontOptions(10.0f));
+            g.drawText(s.description, descRect.removeFromTop(14), juce::Justification::centredLeft);
+        }
+    }
 
-    contentArea.removeFromTop(5);
-
-    // Convolution Section
-    auto convArea = contentArea.removeFromTop(120);
-    drawSection(convArea, "CONVOLUTION REVERB");
-
-    contentArea.removeFromTop(5);
-
-    // Output Processing Section
-    auto outputArea = contentArea.removeFromTop(85);
-    drawSection(outputArea, "OUTPUT PROCESSING (Exciter + 3-Band Compressor)");
-
-    contentArea.removeFromTop(5);
-
-    // Preset Section
-    auto presetArea = contentArea.removeFromTop(35);
-    drawSection(presetArea, "PRESETS");
+    // Energy meter (top-right of energy section)
+    if (!energySectionBounds.isEmpty())
+    {
+        auto meterRect = juce::Rectangle<int>(energySectionBounds.getRight() - 130,
+                                               energySectionBounds.getY() + 4, 110, 14);
+        g.setColour(juce::Colours::black);
+        g.fillRect(meterRect);
+        g.setColour(juce::Colour(0xffff8800));
+        g.fillRect(meterRect.withWidth(static_cast<int>(currentGlobalEnergy * meterRect.getWidth())));
+        g.setColour(juce::Colours::grey);
+        g.drawRect(meterRect);
+    }
 
     // Status lines at bottom
-    auto statusArea = getLocalBounds().removeFromBottom(40);
+    auto statusArea = getLocalBounds().removeFromBottom(42);
     g.setFont(juce::FontOptions(10.0f));
 
     auto debugLine = statusArea.removeFromTop(18);
-    juce::String debugText = "DEBUG LEVELS - In: " + juce::String(currentInputLevel, 3)
-        + " | Synth: " + juce::String(debugLevelAfterSynth, 3)
-        + " | Conv: " + juce::String(debugLevelAfterConv, 3)
-        + " | Exc: " + juce::String(debugLevelAfterExciter, 3)
-        + " | Comp: " + juce::String(debugLevelAfterComp, 3)
-        + " | Out: " + juce::String(debugLevelFinal, 3);
+    juce::String debugText = "LEVELS - In: " + juce::String(diagnosticState.input.rmsL.load(std::memory_order_relaxed), 3)
+        + " | Synth: " + juce::String(diagnosticState.afterSynth.rmsL.load(std::memory_order_relaxed), 3)
+        + " | Conv: " + juce::String(diagnosticState.afterConv.rmsL.load(std::memory_order_relaxed), 3)
+        + " | Exc: " + juce::String(diagnosticState.afterExciter.rmsL.load(std::memory_order_relaxed), 3)
+        + " | Comp: " + juce::String(diagnosticState.afterComp.rmsL.load(std::memory_order_relaxed), 3)
+        + " | Out: " + juce::String(diagnosticState.output.rmsL.load(std::memory_order_relaxed), 3);
     g.setColour(juce::Colours::yellow);
     g.drawText(debugText, debugLine, juce::Justification::centred, true);
 
@@ -1096,180 +1439,273 @@ void MainComponent::resized()
     audioInputModeButton.setBounds(midiRow.removeFromLeft(90));
     syntheticModeButton.setBounds(midiRow.removeFromLeft(90));
 
-    area.removeFromTop(4);
+    area.removeFromTop(6);
 
-    // === INPUT SECTION ===
-    auto inputArea = area.removeFromTop(55).reduced(5, 0);
-    inputArea.removeFromTop(22);
-    auto inputRow = inputArea.removeFromTop(28);
+    // Helper: title(20) + description(14) + gap(4) = 38px reserved at top of each section
+    constexpr int sectionHeaderH = 38;
 
-    inputGainLabel.setBounds(inputRow.removeFromLeft(65));
-    inputGainSlider.setBounds(inputRow.removeFromLeft(110));
-    inputRow.removeFromLeft(15);
-    strikeThreshLabel.setBounds(inputRow.removeFromLeft(80));
-    strikeThreshSlider.setBounds(inputRow.removeFromLeft(110));
-    inputRow.removeFromLeft(15);
-    strikeHoldoffLabel.setBounds(inputRow.removeFromLeft(55));
-    strikeHoldoffSlider.setBounds(inputRow.removeFromLeft(110));
-
-    area.removeFromTop(5);
-
-    // === ENERGY SECTION ===
-    auto energyArea = area.removeFromTop(55).reduced(5, 0);
-    energyArea.removeFromTop(22);
-    auto energyRow = energyArea.removeFromTop(28);
-
-    energyDecayLabel.setBounds(energyRow.removeFromLeft(45));
-    energyDecaySlider.setBounds(energyRow.removeFromLeft(120));
-    energyRow.removeFromLeft(15);
-    energyInjectionLabel.setBounds(energyRow.removeFromLeft(55));
-    energyInjectionSlider.setBounds(energyRow.removeFromLeft(90));
-    energyRow.removeFromLeft(15);
-    energyPowerLabel.setBounds(energyRow.removeFromLeft(45));
-    energyPowerSlider.setBounds(energyRow.removeFromLeft(90));
-
-    area.removeFromTop(5);
-
-    // === RESONATOR SECTION ===
-    auto resonatorArea = area.removeFromTop(300).reduced(5, 0);
-    resonatorArea.removeFromTop(22);
-
-    auto globalRow = resonatorArea.removeFromTop(26);
-    globalDecayLabel.setBounds(globalRow.removeFromLeft(45));
-    globalDecaySlider.setBounds(globalRow.removeFromLeft(100));
-    globalRow.removeFromLeft(15);
-    globalBrightnessLabel.setBounds(globalRow.removeFromLeft(65));
-    globalBrightnessSlider.setBounds(globalRow.removeFromLeft(100));
-    globalRow.removeFromLeft(15);
-    globalSpreadLevelLabel.setBounds(globalRow.removeFromLeft(65));
-    globalSpreadLevelSlider.setBounds(globalRow.removeFromLeft(100));
-    globalRow.removeFromLeft(15);
-    globalSpreadPanWidthLabel.setBounds(globalRow.removeFromLeft(65));
-    globalSpreadPanWidthSlider.setBounds(globalRow.removeFromLeft(100));
-
-    resonatorArea.removeFromTop(8);
-
-    auto headerRow = resonatorArea.removeFromTop(18);
-    int col1 = 25, col2 = 25, col3 = 75, col4 = 130, col5 = 55, col6 = 55, col7 = 55, col8 = 55, col9 = 55;
-    int colGap = 8;
-
-    resHeaderOn.setBounds(headerRow.removeFromLeft(col1 + col2));
-    headerRow.removeFromLeft(colGap);
-    resHeaderMode.setBounds(headerRow.removeFromLeft(col3));
-    headerRow.removeFromLeft(colGap);
-    resHeaderFreq.setBounds(headerRow.removeFromLeft(col4));
-    headerRow.removeFromLeft(colGap);
-    resHeaderGain.setBounds(headerRow.removeFromLeft(col5));
-    headerRow.removeFromLeft(colGap);
-    resHeaderBright.setBounds(headerRow.removeFromLeft(col6));
-    headerRow.removeFromLeft(colGap);
-    resHeaderSpread.setBounds(headerRow.removeFromLeft(col7));
-    headerRow.removeFromLeft(colGap);
-    resHeaderDetune.setBounds(headerRow.removeFromLeft(col8));
-    headerRow.removeFromLeft(colGap);
-    resHeaderPan.setBounds(headerRow.removeFromLeft(col9));
-
-    resonatorArea.removeFromTop(4);
-
-    for (int i = 0; i < kNumResonators; ++i)
+    // === INPUT SECTION === (38 header + 28 controls = 66 + padding)
+    inputSectionBounds = area.removeFromTop(70);
     {
-        auto& rc = resonatorControls[i];
-        auto resRow = resonatorArea.removeFromTop(50);
+        auto s = inputSectionBounds.reduced(8, 0);
+        s.removeFromTop(sectionHeaderH);
+        auto row = s.removeFromTop(28);
 
-        rc.nameLabel.setBounds(resRow.removeFromLeft(col1));
-        rc.enableButton.setBounds(resRow.removeFromLeft(col2).reduced(2));
-        resRow.removeFromLeft(colGap);
-
-        auto modeArea = resRow.removeFromLeft(col3);
-        rc.freeModeButton.setBounds(modeArea.removeFromTop(24));
-        rc.snapModeButton.setBounds(modeArea.removeFromTop(24));
-        resRow.removeFromLeft(colGap);
-
-        auto freqArea = resRow.removeFromLeft(col4);
-        auto freqControlArea = freqArea.removeFromTop(28);
-        rc.freqSlider.setBounds(freqControlArea);
-        rc.noteCombo.setBounds(freqControlArea);
-        rc.freqValueLabel.setBounds(freqArea.removeFromTop(18));
-        resRow.removeFromLeft(colGap);
-
-        rc.gainSlider.setBounds(resRow.removeFromLeft(col5).withHeight(22));
-        resRow.removeFromLeft(colGap);
-        rc.brightnessModSlider.setBounds(resRow.removeFromLeft(col6).withHeight(22));
-        resRow.removeFromLeft(colGap);
-        rc.spreadModSlider.setBounds(resRow.removeFromLeft(col7).withHeight(22));
-        resRow.removeFromLeft(colGap);
-        rc.detuneModSlider.setBounds(resRow.removeFromLeft(col8).withHeight(22));
-        resRow.removeFromLeft(colGap);
-        rc.panModSlider.setBounds(resRow.removeFromLeft(col9).withHeight(22));
+        inputGainLabel.setBounds(row.removeFromLeft(65));
+        inputGainSlider.setBounds(row.removeFromLeft(120));
+        row.removeFromLeft(15);
+        strikeThreshLabel.setBounds(row.removeFromLeft(80));
+        strikeThreshSlider.setBounds(row.removeFromLeft(120));
+        row.removeFromLeft(15);
+        strikeHoldoffLabel.setBounds(row.removeFromLeft(55));
+        strikeHoldoffSlider.setBounds(row.removeFromLeft(120));
     }
 
-    area.removeFromTop(5);
+    area.removeFromTop(6);
 
-    // === CONVOLUTION SECTION ===
-    auto convArea = area.removeFromTop(120).reduced(5, 0);
-    convArea.removeFromTop(22);
+    // === ENERGY SECTION ===
+    energySectionBounds = area.removeFromTop(70);
+    {
+        auto s = energySectionBounds.reduced(8, 0);
+        s.removeFromTop(sectionHeaderH);
+        auto row = s.removeFromTop(28);
 
-    irWaveform.setBounds(convArea.removeFromTop(60).reduced(0, 2));
+        energyDecayLabel.setBounds(row.removeFromLeft(45));
+        energyDecaySlider.setBounds(row.removeFromLeft(120));
+        row.removeFromLeft(15);
+        energyInjectionLabel.setBounds(row.removeFromLeft(60));
+        energyInjectionSlider.setBounds(row.removeFromLeft(100));
+        row.removeFromLeft(15);
+        energyPowerLabel.setBounds(row.removeFromLeft(45));
+        energyPowerSlider.setBounds(row.removeFromLeft(100));
+    }
 
-    auto convControlRow = convArea.removeFromTop(28);
-    loadIRButton.setBounds(convControlRow.removeFromLeft(80));
-    convControlRow.removeFromLeft(10);
-    irFileLabel.setBounds(convControlRow.removeFromLeft(180));
-    convControlRow.removeFromLeft(20);
-    reverbMixLabel.setBounds(convControlRow.removeFromLeft(30));
-    reverbMixSlider.setBounds(convControlRow.removeFromLeft(100));
-    convControlRow.removeFromLeft(15);
-    convGainLabel.setBounds(convControlRow.removeFromLeft(35));
-    convGainSlider.setBounds(convControlRow.removeFromLeft(100));
+    area.removeFromTop(6);
 
-    area.removeFromTop(5);
+    // === RESONATOR SECTION ===
+    resonatorSectionBounds = area.removeFromTop(310);
+    {
+        auto s = resonatorSectionBounds.reduced(8, 0);
+        s.removeFromTop(sectionHeaderH);
+
+        auto globalRow = s.removeFromTop(26);
+        globalDecayLabel.setBounds(globalRow.removeFromLeft(45));
+        globalDecaySlider.setBounds(globalRow.removeFromLeft(100));
+        globalRow.removeFromLeft(15);
+        globalBrightnessLabel.setBounds(globalRow.removeFromLeft(65));
+        globalBrightnessSlider.setBounds(globalRow.removeFromLeft(100));
+        globalRow.removeFromLeft(15);
+        globalSpreadLevelLabel.setBounds(globalRow.removeFromLeft(65));
+        globalSpreadLevelSlider.setBounds(globalRow.removeFromLeft(100));
+        globalRow.removeFromLeft(15);
+        globalSpreadPanWidthLabel.setBounds(globalRow.removeFromLeft(65));
+        globalSpreadPanWidthSlider.setBounds(globalRow.removeFromLeft(100));
+
+        s.removeFromTop(6);
+
+        auto headerRow = s.removeFromTop(18);
+        int col1 = 25, col2 = 25, col3 = 75, col4 = 130, col5 = 55, col6 = 55, col7 = 55, col8 = 55, col9 = 55;
+        int colGap = 8;
+
+        resHeaderOn.setBounds(headerRow.removeFromLeft(col1 + col2));
+        headerRow.removeFromLeft(colGap);
+        resHeaderMode.setBounds(headerRow.removeFromLeft(col3));
+        headerRow.removeFromLeft(colGap);
+        resHeaderFreq.setBounds(headerRow.removeFromLeft(col4));
+        headerRow.removeFromLeft(colGap);
+        resHeaderGain.setBounds(headerRow.removeFromLeft(col5));
+        headerRow.removeFromLeft(colGap);
+        resHeaderBright.setBounds(headerRow.removeFromLeft(col6));
+        headerRow.removeFromLeft(colGap);
+        resHeaderSpread.setBounds(headerRow.removeFromLeft(col7));
+        headerRow.removeFromLeft(colGap);
+        resHeaderDetune.setBounds(headerRow.removeFromLeft(col8));
+        headerRow.removeFromLeft(colGap);
+        resHeaderPan.setBounds(headerRow.removeFromLeft(col9));
+
+        s.removeFromTop(4);
+
+        for (int i = 0; i < kNumResonators; ++i)
+        {
+            auto& rc = resonatorControls[i];
+            auto resRow = s.removeFromTop(50);
+
+            rc.nameLabel.setBounds(resRow.removeFromLeft(col1));
+            rc.enableButton.setBounds(resRow.removeFromLeft(col2).reduced(2));
+            resRow.removeFromLeft(colGap);
+
+            auto modeArea = resRow.removeFromLeft(col3);
+            rc.freeModeButton.setBounds(modeArea.removeFromTop(24));
+            rc.snapModeButton.setBounds(modeArea.removeFromTop(24));
+            resRow.removeFromLeft(colGap);
+
+            auto freqArea = resRow.removeFromLeft(col4);
+            auto freqControlArea = freqArea.removeFromTop(28);
+            rc.freqSlider.setBounds(freqControlArea);
+            rc.noteCombo.setBounds(freqControlArea);
+            rc.freqValueLabel.setBounds(freqArea.removeFromTop(18));
+            resRow.removeFromLeft(colGap);
+
+            rc.gainSlider.setBounds(resRow.removeFromLeft(col5).withHeight(22));
+            resRow.removeFromLeft(colGap);
+            rc.brightnessModSlider.setBounds(resRow.removeFromLeft(col6).withHeight(22));
+            resRow.removeFromLeft(colGap);
+            rc.spreadModSlider.setBounds(resRow.removeFromLeft(col7).withHeight(22));
+            resRow.removeFromLeft(colGap);
+            rc.detuneModSlider.setBounds(resRow.removeFromLeft(col8).withHeight(22));
+            resRow.removeFromLeft(colGap);
+            rc.panModSlider.setBounds(resRow.removeFromLeft(col9).withHeight(22));
+        }
+    }
+
+    area.removeFromTop(6);
+
+    // === CONVOLUTION SECTION === (includes post-conv EQ and IR B)
+    convSectionBounds = area.removeFromTop(170);
+    {
+        auto s = convSectionBounds.reduced(8, 0);
+        // Toggle in title bar
+        convSectionToggle.setBounds(convSectionBounds.getRight() - 50, convSectionBounds.getY() + 2, 40, 18);
+
+        s.removeFromTop(sectionHeaderH);
+
+        irWaveform.setBounds(s.removeFromTop(52).reduced(0, 2));
+        s.removeFromTop(2);
+
+        auto controlRow = s.removeFromTop(28);
+        loadIRButton.setBounds(controlRow.removeFromLeft(80));
+        controlRow.removeFromLeft(10);
+        irFileLabel.setBounds(controlRow.removeFromLeft(160));
+        controlRow.removeFromLeft(15);
+        reverbMixLabel.setBounds(controlRow.removeFromLeft(30));
+        reverbMixSlider.setBounds(controlRow.removeFromLeft(100));
+        controlRow.removeFromLeft(15);
+        convGainLabel.setBounds(controlRow.removeFromLeft(35));
+        convGainSlider.setBounds(controlRow.removeFromLeft(100));
+
+        s.removeFromTop(4);
+
+        auto eqRow = s.removeFromTop(28);
+        postConvLowLabel.setBounds(eqRow.removeFromLeft(45));
+        postConvLowSlider.setBounds(eqRow.removeFromLeft(80));
+        eqRow.removeFromLeft(8);
+        postConvMidLabel.setBounds(eqRow.removeFromLeft(45));
+        postConvMidSlider.setBounds(eqRow.removeFromLeft(80));
+        eqRow.removeFromLeft(8);
+        postConvHighLabel.setBounds(eqRow.removeFromLeft(50));
+        postConvHighSlider.setBounds(eqRow.removeFromLeft(80));
+        eqRow.removeFromLeft(15);
+        loadIRBButton.setBounds(eqRow.removeFromLeft(80));
+        eqRow.removeFromLeft(5);
+        irBFileLabel.setBounds(eqRow.removeFromLeft(120));
+    }
+
+    area.removeFromTop(6);
+
+    // === NONLINEAR DYNAMICS SECTION ===
+    nlSectionBounds = area.removeFromTop(105);
+    {
+        auto s = nlSectionBounds.reduced(8, 0);
+        // Toggle in title bar
+        nlSectionToggle.setBounds(nlSectionBounds.getRight() - 50, nlSectionBounds.getY() + 2, 40, 18);
+
+        s.removeFromTop(sectionHeaderH);
+
+        auto row1 = s.removeFromTop(28);
+        couplingRateLabel.setBounds(row1.removeFromLeft(55));
+        couplingRateSlider.setBounds(row1.removeFromLeft(100));
+        row1.removeFromLeft(15);
+        bloomThreshLabel.setBounds(row1.removeFromLeft(45));
+        bloomThreshSlider.setBounds(row1.removeFromLeft(100));
+        row1.removeFromLeft(15);
+        glideDirectionLabel.setBounds(row1.removeFromLeft(60));
+        glideDirectionSlider.setBounds(row1.removeFromLeft(100));
+        row1.removeFromLeft(15);
+        glideSensitivityLabel.setBounds(row1.removeFromLeft(65));
+        glideSensitivitySlider.setBounds(row1.removeFromLeft(100));
+
+        s.removeFromTop(4);
+
+        auto row2 = s.removeFromTop(28);
+        modalTemplateLabel.setBounds(row2.removeFromLeft(60));
+        modalTemplateCombo.setBounds(row2.removeFromLeft(150));
+    }
+
+    area.removeFromTop(6);
 
     // === OUTPUT PROCESSING SECTION ===
-    auto outputArea = area.removeFromTop(85).reduced(5, 0);
-    outputArea.removeFromTop(22);
+    outputSectionBounds = area.removeFromTop(105);
+    {
+        auto s = outputSectionBounds.reduced(8, 0);
+        s.removeFromTop(sectionHeaderH);
 
-    auto exciterRow = outputArea.removeFromTop(28);
-    exciterEnableButton.setBounds(exciterRow.removeFromLeft(70));
-    exciterRow.removeFromLeft(15);
-    exciterFreqLabel.setBounds(exciterRow.removeFromLeft(50));
-    exciterFreqSlider.setBounds(exciterRow.removeFromLeft(100));
-    exciterRow.removeFromLeft(15);
-    exciterDriveLabel.setBounds(exciterRow.removeFromLeft(40));
-    exciterDriveSlider.setBounds(exciterRow.removeFromLeft(80));
-    exciterRow.removeFromLeft(15);
-    exciterMixLabel.setBounds(exciterRow.removeFromLeft(30));
-    exciterMixSlider.setBounds(exciterRow.removeFromLeft(80));
+        auto exciterRow = s.removeFromTop(28);
+        exciterEnableButton.setBounds(exciterRow.removeFromLeft(70));
+        exciterRow.removeFromLeft(15);
+        exciterFreqLabel.setBounds(exciterRow.removeFromLeft(50));
+        exciterFreqSlider.setBounds(exciterRow.removeFromLeft(100));
+        exciterRow.removeFromLeft(15);
+        exciterDriveLabel.setBounds(exciterRow.removeFromLeft(40));
+        exciterDriveSlider.setBounds(exciterRow.removeFromLeft(80));
+        exciterRow.removeFromLeft(15);
+        exciterMixLabel.setBounds(exciterRow.removeFromLeft(30));
+        exciterMixSlider.setBounds(exciterRow.removeFromLeft(80));
 
-    outputArea.removeFromTop(4);
+        s.removeFromTop(4);
 
-    auto compRow = outputArea.removeFromTop(28);
-    compEnableButton.setBounds(compRow.removeFromLeft(90));
-    compRow.removeFromLeft(15);
-    compThreshLabel.setBounds(compRow.removeFromLeft(45));
-    compThreshSlider.setBounds(compRow.removeFromLeft(80));
-    compRow.removeFromLeft(10);
-    compRatioLabel.setBounds(compRow.removeFromLeft(40));
-    compRatioSlider.setBounds(compRow.removeFromLeft(65));
-    compRow.removeFromLeft(10);
-    compAttackLabel.setBounds(compRow.removeFromLeft(30));
-    compAttackSlider.setBounds(compRow.removeFromLeft(65));
-    compRow.removeFromLeft(10);
-    compReleaseLabel.setBounds(compRow.removeFromLeft(30));
-    compReleaseSlider.setBounds(compRow.removeFromLeft(65));
+        auto compRow = s.removeFromTop(28);
+        compEnableButton.setBounds(compRow.removeFromLeft(90));
+        compRow.removeFromLeft(15);
+        compThreshLabel.setBounds(compRow.removeFromLeft(45));
+        compThreshSlider.setBounds(compRow.removeFromLeft(80));
+        compRow.removeFromLeft(10);
+        compRatioLabel.setBounds(compRow.removeFromLeft(40));
+        compRatioSlider.setBounds(compRow.removeFromLeft(65));
+        compRow.removeFromLeft(10);
+        compAttackLabel.setBounds(compRow.removeFromLeft(30));
+        compAttackSlider.setBounds(compRow.removeFromLeft(65));
+        compRow.removeFromLeft(10);
+        compReleaseLabel.setBounds(compRow.removeFromLeft(30));
+        compReleaseSlider.setBounds(compRow.removeFromLeft(65));
+    }
 
-    area.removeFromTop(5);
+    area.removeFromTop(6);
+
+    // === MACRO SECTION ===
+    macroSectionBounds = area.removeFromTop(70);
+    {
+        auto s = macroSectionBounds.reduced(8, 0);
+        // Toggle in title bar
+        macroSectionToggle.setBounds(macroSectionBounds.getRight() - 50, macroSectionBounds.getY() + 2, 40, 18);
+
+        s.removeFromTop(sectionHeaderH);
+
+        auto row = s.removeFromTop(28);
+        for (int i = 0; i < 4; ++i)
+        {
+            macroLabels[i].setBounds(row.removeFromLeft(55));
+            macroSliders[i].setBounds(row.removeFromLeft(100));
+            row.removeFromLeft(15);
+        }
+    }
+
+    area.removeFromTop(6);
 
     // === PRESET SECTION ===
-    auto presetRow = area.removeFromTop(35).reduced(5, 0);
-    presetRow.removeFromTop(8);
-    presetLabel.setBounds(presetRow.removeFromLeft(50));
-    presetComboBox.setBounds(presetRow.removeFromLeft(200));
-    presetRow.removeFromLeft(10);
-    presetSaveButton.setBounds(presetRow.removeFromLeft(60).withHeight(24));
-    presetRow.removeFromLeft(5);
-    presetSaveAsButton.setBounds(presetRow.removeFromLeft(80).withHeight(24));
+    presetSectionBounds = area.removeFromTop(42);
+    {
+        auto s = presetSectionBounds.reduced(8, 0);
+        s.removeFromTop(10);
+        auto row = s.removeFromTop(26);
+        presetLabel.setBounds(row.removeFromLeft(50));
+        presetComboBox.setBounds(row.removeFromLeft(200));
+        row.removeFromLeft(10);
+        presetSaveButton.setBounds(row.removeFromLeft(60).withHeight(24));
+        row.removeFromLeft(5);
+        presetSaveAsButton.setBounds(row.removeFromLeft(80).withHeight(24));
+    }
 
-    area.removeFromTop(5);
+    area.removeFromTop(6);
 
     // === BOTTOM CONTROLS ===
     auto bottomRow = area.removeFromTop(35);
@@ -1277,4 +1713,6 @@ void MainComponent::resized()
     volumeSlider.setBounds(bottomRow.removeFromLeft(200));
     bottomRow.removeFromLeft(20);
     panicButton.setBounds(bottomRow.removeFromRight(80).withHeight(28));
+    bottomRow.removeFromRight(10);
+    diagnosticsButton.setBounds(bottomRow.removeFromRight(100).withHeight(28));
 }

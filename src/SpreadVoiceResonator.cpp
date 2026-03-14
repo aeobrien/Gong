@@ -224,14 +224,32 @@ void SpreadVoiceResonator::setFrequencyBendEnergyAmount(float amount)
     frequencyBendEnergyAmount = juce::jlimit(0.0f, 1.0f, amount);
 }
 
+void SpreadVoiceResonator::setPitchGlideDirection(float dir)
+{
+    glideDirection = juce::jlimit(-1.0f, 1.0f, dir);
+}
+
+void SpreadVoiceResonator::setPitchGlideSensitivity(float cents)
+{
+    glideSensitivity = juce::jlimit(0.0f, 200.0f, cents);
+}
+
+void SpreadVoiceResonator::setPitchGlideSmoothing(float coeff)
+{
+    glideSmoothing = juce::jlimit(0.001f, 0.5f, coeff);
+}
+
 void SpreadVoiceResonator::updateVoiceParameters()
 {
     float energy = currentEnergy;
     float baseFreq = getEffectiveFrequency();
 
-    // Apply frequency bend from energy (subtle pitch rise with energy)
-    float freqBendCents = energy * frequencyBendEnergyAmount * 50.0f;  // Max 50 cents up
-    float freqBendRatio = std::pow(2.0f, freqBendCents / 1200.0f);
+    // Step 6: Nonlinear pitch glide with smoothing
+    float targetBend = energy * glideSensitivity * glideDirection;
+    float maxBend = 200.0f;
+    targetBend = juce::jlimit(-maxBend, maxBend, targetBend);
+    currentBend += (targetBend - currentBend) * glideSmoothing;
+    float freqBendRatio = std::pow(2.0f, currentBend / 1200.0f);
     baseFreq *= freqBendRatio;
 
     // Calculate effective brightness (higher energy = brighter)

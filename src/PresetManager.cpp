@@ -3,6 +3,7 @@
 #include "ConvolutionEngine.h"
 #include "ExciterProcessor.h"
 #include "MultibandCompressor.h"
+#include "DiagnosticState.h"
 
 PresetManager::PresetManager()
 {
@@ -40,12 +41,13 @@ bool PresetManager::savePreset(const juce::String& name,
                                const ConvolutionEngine& conv,
                                const ExciterProcessor& exciter,
                                const MultibandCompressor& comp,
-                               float masterGain)
+                               float masterGain,
+                               DiagnosticState* diagState)
 {
     if (!presetsDirectory.exists())
         return false;
 
-    auto json = serializeToJson(synth, conv, exciter, comp, masterGain, name);
+    auto json = serializeToJson(synth, conv, exciter, comp, masterGain, name, diagState);
     auto file = presetsDirectory.getChildFile(name + ".json");
 
     auto jsonString = juce::JSON::toString(json);
@@ -63,7 +65,8 @@ bool PresetManager::loadPreset(const juce::String& name,
                                ConvolutionEngine& conv,
                                ExciterProcessor& exciter,
                                MultibandCompressor& comp,
-                               float& masterGain)
+                               float& masterGain,
+                               DiagnosticState* diagState)
 {
     auto file = presetsDirectory.getChildFile(name + ".json");
     if (!file.existsAsFile())
@@ -75,7 +78,7 @@ bool PresetManager::loadPreset(const juce::String& name,
     if (json.isVoid())
         return false;
 
-    if (deserializeFromJson(json, synth, conv, exciter, comp, masterGain))
+    if (deserializeFromJson(json, synth, conv, exciter, comp, masterGain, diagState))
     {
         currentPresetName = name;
         return true;
@@ -89,11 +92,12 @@ juce::var PresetManager::serializeToJson(const GongSynthesizer& synth,
                                           const ExciterProcessor& exciter,
                                           const MultibandCompressor& comp,
                                           float masterGain,
-                                          const juce::String& name) const
+                                          const juce::String& name,
+                                          DiagnosticState* diagState) const
 {
     auto* root = new juce::DynamicObject();
 
-    root->setProperty("version", 1);
+    root->setProperty("version", 3);
     root->setProperty("name", name);
     root->setProperty("masterGain", static_cast<double>(masterGain));
 
@@ -126,6 +130,11 @@ juce::var PresetManager::serializeToJson(const GongSynthesizer& synth,
         energyMod->setProperty("panWidth", static_cast<double>(res.getPanWidthEnergyAmount()));
         voice->setProperty("energyMod", juce::var(energyMod));
 
+        // v3: pitch glide
+        voice->setProperty("glideDirection", static_cast<double>(res.getPitchGlideDirection()));
+        voice->setProperty("glideSensitivity", static_cast<double>(res.getPitchGlideSensitivity()));
+        voice->setProperty("glideSmoothing", static_cast<double>(res.getPitchGlideSmoothing()));
+
         voices.add(juce::var(voice));
     }
     resonators->setProperty("voices", voices);
@@ -137,13 +146,29 @@ juce::var PresetManager::serializeToJson(const GongSynthesizer& synth,
     energy->setProperty("decayMs", static_cast<double>(ea.getGlobalDecayMs()));
     energy->setProperty("injectionGain", static_cast<double>(ea.getInjectionGain()));
     energy->setProperty("injectionPower", static_cast<double>(ea.getInjectionPower()));
+    // v3: nonlinear energy parameters
+    energy->setProperty("couplingRate", static_cast<double>(ea.getCouplingRate()));
+    energy->setProperty("bloomThreshold", static_cast<double>(ea.getBloomThreshold()));
+    energy->setProperty("bloomRate", static_cast<double>(ea.getBloomRate()));
+    energy->setProperty("dampRate", static_cast<double>(ea.getDampRate()));
+    energy->setProperty("rollPrimeLevel", static_cast<double>(ea.getRollPrimeLevel()));
+    // Per-band decay times
+    juce::Array<juce::var> bandDecays;
+    for (int i = 0; i < EnergyAccumulator::kNumBands; ++i)
+        bandDecays.add(static_cast<double>(ea.getBandDecayMs(i)));
+    energy->setProperty("bandDecayMs", bandDecays);
     root->setProperty("energy", juce::var(energy));
 
     // Convolution
     auto* convObj = new juce::DynamicObject();
     convObj->setProperty("irFilename", conv.getIRFileName());
+    convObj->setProperty("irFilenameB", conv.getIRFileNameB());
     convObj->setProperty("mix", static_cast<double>(conv.getWetDryMix()));
     convObj->setProperty("gainDb", static_cast<double>(conv.getOutputGainDb()));
+    // v3: post-conv EQ
+    convObj->setProperty("postConvLowGainDb", static_cast<double>(conv.getPostConvLowGainDb()));
+    convObj->setProperty("postConvMidGainDb", static_cast<double>(conv.getPostConvMidGainDb()));
+    convObj->setProperty("postConvHighGainDb", static_cast<double>(conv.getPostConvHighGainDb()));
     root->setProperty("convolution", juce::var(convObj));
 
     // Exciter
@@ -172,6 +197,42 @@ juce::var PresetManager::serializeToJson(const GongSynthesizer& synth,
     input->setProperty("strikeHoldoffMs", static_cast<double>(synth.getStrikeHoldoffMs()));
     root->setProperty("input", juce::var(input));
 
+    // Modulation routes (version 2)
+    if (diagState != nullptr)
+    {
+        auto* modObj = new juce::DynamicObject();
+
+        juce::Array<juce::var> routeArray;
+        int routeCount = 0;
+        const ModRoute* routes = diagState->getActiveRoutes(routeCount);
+        for (int i = 0; i < routeCount; ++i)
+        {
+            auto* r = new juce::DynamicObject();
+            r->setProperty("source", juce::String(modSourceToString(routes[i].source)));
+            r->setProperty("target", juce::String(modTargetToString(routes[i].target)));
+            r->setProperty("amount", static_cast<double>(routes[i].amount));
+            r->setProperty("curve", juce::String(curveTypeToString(routes[i].curve)));
+            r->setProperty("enabled", routes[i].enabled);
+            routeArray.add(juce::var(r));
+        }
+        modObj->setProperty("routes", routeArray);
+
+        auto* lfo1Obj = new juce::DynamicObject();
+        lfo1Obj->setProperty("rate", static_cast<double>(diagState->lfo1Rate.load(std::memory_order_relaxed)));
+        static const char* shapeNames[] = { "sine", "triangle", "saw", "square" };
+        int shape1 = diagState->lfo1Shape.load(std::memory_order_relaxed);
+        lfo1Obj->setProperty("shape", juce::String(shapeNames[juce::jlimit(0, 3, shape1)]));
+        modObj->setProperty("lfo1", juce::var(lfo1Obj));
+
+        auto* lfo2Obj = new juce::DynamicObject();
+        lfo2Obj->setProperty("rate", static_cast<double>(diagState->lfo2Rate.load(std::memory_order_relaxed)));
+        int shape2 = diagState->lfo2Shape.load(std::memory_order_relaxed);
+        lfo2Obj->setProperty("shape", juce::String(shapeNames[juce::jlimit(0, 3, shape2)]));
+        modObj->setProperty("lfo2", juce::var(lfo2Obj));
+
+        root->setProperty("modulation", juce::var(modObj));
+    }
+
     return juce::var(root);
 }
 
@@ -180,7 +241,8 @@ bool PresetManager::deserializeFromJson(const juce::var& json,
                                          ConvolutionEngine& conv,
                                          ExciterProcessor& exciter,
                                          MultibandCompressor& comp,
-                                         float& masterGain)
+                                         float& masterGain,
+                                         DiagnosticState* diagState)
 {
     if (!json.isObject())
         return false;
@@ -270,6 +332,14 @@ bool PresetManager::deserializeFromJson(const juce::var& json,
                     if (em->hasProperty("panWidth"))
                         res.setPanWidthEnergyAmount(static_cast<float>(static_cast<double>(em->getProperty("panWidth"))));
                 }
+
+                // v3: pitch glide
+                if (voice->hasProperty("glideDirection"))
+                    res.setPitchGlideDirection(static_cast<float>(static_cast<double>(voice->getProperty("glideDirection"))));
+                if (voice->hasProperty("glideSensitivity"))
+                    res.setPitchGlideSensitivity(static_cast<float>(static_cast<double>(voice->getProperty("glideSensitivity"))));
+                if (voice->hasProperty("glideSmoothing"))
+                    res.setPitchGlideSmoothing(static_cast<float>(static_cast<double>(voice->getProperty("glideSmoothing"))));
             }
         }
     }
@@ -287,6 +357,27 @@ bool PresetManager::deserializeFromJson(const juce::var& json,
             ea.setInjectionGain(static_cast<float>(static_cast<double>(energy->getProperty("injectionGain"))));
         if (energy->hasProperty("injectionPower"))
             ea.setInjectionPower(static_cast<float>(static_cast<double>(energy->getProperty("injectionPower"))));
+        // v3 fields
+        if (energy->hasProperty("couplingRate"))
+            ea.setCouplingRate(static_cast<float>(static_cast<double>(energy->getProperty("couplingRate"))));
+        if (energy->hasProperty("bloomThreshold"))
+            ea.setBloomThreshold(static_cast<float>(static_cast<double>(energy->getProperty("bloomThreshold"))));
+        if (energy->hasProperty("bloomRate"))
+            ea.setBloomRate(static_cast<float>(static_cast<double>(energy->getProperty("bloomRate"))));
+        if (energy->hasProperty("dampRate"))
+            ea.setDampRate(static_cast<float>(static_cast<double>(energy->getProperty("dampRate"))));
+        if (energy->hasProperty("rollPrimeLevel"))
+            ea.setRollPrimeLevel(static_cast<float>(static_cast<double>(energy->getProperty("rollPrimeLevel"))));
+        if (energy->hasProperty("bandDecayMs"))
+        {
+            auto bdVar = energy->getProperty("bandDecayMs");
+            if (bdVar.isArray())
+            {
+                auto* bdArr = bdVar.getArray();
+                for (int i = 0; i < juce::jmin(bdArr->size(), EnergyAccumulator::kNumBands); ++i)
+                    ea.setBandDecayMs(i, static_cast<float>(static_cast<double>((*bdArr)[i])));
+            }
+        }
     }
 
     // Convolution
@@ -311,6 +402,24 @@ bool PresetManager::deserializeFromJson(const juce::var& json,
                     conv.loadImpulseResponse(irFile);
             }
         }
+        // v3: Load IR B
+        if (convObj->hasProperty("irFilenameB"))
+        {
+            juce::String irFnB = convObj->getProperty("irFilenameB").toString();
+            if (irFnB.isNotEmpty() && irDirectory.exists())
+            {
+                auto irFileB = irDirectory.getChildFile(irFnB);
+                if (irFileB.existsAsFile())
+                    conv.loadImpulseResponseB(irFileB);
+            }
+        }
+        // v3: Post-conv EQ
+        if (convObj->hasProperty("postConvLowGainDb"))
+            conv.setPostConvLowGainDb(static_cast<float>(static_cast<double>(convObj->getProperty("postConvLowGainDb"))));
+        if (convObj->hasProperty("postConvMidGainDb"))
+            conv.setPostConvMidGainDb(static_cast<float>(static_cast<double>(convObj->getProperty("postConvMidGainDb"))));
+        if (convObj->hasProperty("postConvHighGainDb"))
+            conv.setPostConvHighGainDb(static_cast<float>(static_cast<double>(convObj->getProperty("postConvHighGainDb"))));
     }
 
     // Exciter
@@ -345,6 +454,72 @@ bool PresetManager::deserializeFromJson(const juce::var& json,
             comp.setAllAttacks(static_cast<float>(static_cast<double>(compObj->getProperty("attackMs"))));
         if (compObj->hasProperty("releaseMs"))
             comp.setAllReleases(static_cast<float>(static_cast<double>(compObj->getProperty("releaseMs"))));
+    }
+
+    // Modulation routes (version 2+)
+    if (diagState != nullptr)
+    {
+        auto modVar = root->getProperty("modulation");
+        if (modVar.isObject())
+        {
+            auto* modObj = modVar.getDynamicObject();
+
+            // Routes
+            auto routesVar = modObj->getProperty("routes");
+            if (routesVar.isArray())
+            {
+                auto* routeArr = routesVar.getArray();
+                std::vector<ModRoute> routes;
+                for (int i = 0; i < routeArr->size() && i < DiagnosticState::kMaxRoutes; ++i)
+                {
+                    auto rVar = (*routeArr)[i];
+                    if (!rVar.isObject()) continue;
+                    auto* rObj = rVar.getDynamicObject();
+                    ModRoute route;
+                    if (rObj->hasProperty("source"))
+                        route.source = modSourceFromString(rObj->getProperty("source").toString().toRawUTF8());
+                    if (rObj->hasProperty("target"))
+                        route.target = modTargetFromString(rObj->getProperty("target").toString().toRawUTF8());
+                    if (rObj->hasProperty("amount"))
+                        route.amount = static_cast<float>(static_cast<double>(rObj->getProperty("amount")));
+                    if (rObj->hasProperty("curve"))
+                        route.curve = curveTypeFromString(rObj->getProperty("curve").toString().toRawUTF8());
+                    if (rObj->hasProperty("enabled"))
+                        route.enabled = static_cast<bool>(rObj->getProperty("enabled"));
+                    routes.push_back(route);
+                }
+                diagState->setRoutes(routes.data(), static_cast<int>(routes.size()));
+            }
+
+            // LFO config
+            auto lfoShapeFromString = [](const juce::String& s) -> int {
+                if (s == "sine") return 0;
+                if (s == "triangle") return 1;
+                if (s == "saw") return 2;
+                if (s == "square") return 3;
+                return 0;
+            };
+
+            auto lfo1Var = modObj->getProperty("lfo1");
+            if (lfo1Var.isObject())
+            {
+                auto* lfo1Obj = lfo1Var.getDynamicObject();
+                if (lfo1Obj->hasProperty("rate"))
+                    diagState->lfo1Rate.store(static_cast<float>(static_cast<double>(lfo1Obj->getProperty("rate"))), std::memory_order_relaxed);
+                if (lfo1Obj->hasProperty("shape"))
+                    diagState->lfo1Shape.store(lfoShapeFromString(lfo1Obj->getProperty("shape").toString()), std::memory_order_relaxed);
+            }
+
+            auto lfo2Var = modObj->getProperty("lfo2");
+            if (lfo2Var.isObject())
+            {
+                auto* lfo2Obj = lfo2Var.getDynamicObject();
+                if (lfo2Obj->hasProperty("rate"))
+                    diagState->lfo2Rate.store(static_cast<float>(static_cast<double>(lfo2Obj->getProperty("rate"))), std::memory_order_relaxed);
+                if (lfo2Obj->hasProperty("shape"))
+                    diagState->lfo2Shape.store(lfoShapeFromString(lfo2Obj->getProperty("shape").toString()), std::memory_order_relaxed);
+            }
+        }
     }
 
     return true;

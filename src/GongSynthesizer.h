@@ -6,6 +6,8 @@
 #include "ImpulseGenerator.h"
 #include "SyntheticImpulseGenerator.h"
 #include "MidiControllerMock.h"
+#include "CombinationToneBank.h"
+#include "CrashNoiseGenerator.h"
 
 /**
  * Energy-accumulation-based gong synthesizer.
@@ -46,6 +48,9 @@ public:
 
     SyntheticImpulseGenerator& getSyntheticImpulseGenerator() { return syntheticImpulseGen; }
     MidiControllerMock& getMidiControllerMock() { return midiControllerMock; }
+
+    CombinationToneBank& getCombinationToneBank() { return combinationToneBank; }
+    CrashNoiseGenerator& getCrashNoiseGenerator() { return crashNoiseGenerator; }
 
     // Excitation mode
     void setExcitationMode(ExcitationMode mode);
@@ -95,6 +100,8 @@ private:
     ImpulseGenerator impulseGenerator;
     SyntheticImpulseGenerator syntheticImpulseGen;
     MidiControllerMock midiControllerMock;
+    CombinationToneBank combinationToneBank;
+    CrashNoiseGenerator crashNoiseGenerator;
 
     // Strike detection
     float strikeThreshold = 0.1f;

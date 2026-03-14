@@ -1,11 +1,13 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "ModulationTypes.h"
 
 class GongSynthesizer;
 class ConvolutionEngine;
 class ExciterProcessor;
 class MultibandCompressor;
+struct DiagnosticState;
 
 /**
  * Manages JSON presets for the Gong Energy Synthesizer.
@@ -35,7 +37,8 @@ public:
                     const ConvolutionEngine& conv,
                     const ExciterProcessor& exciter,
                     const MultibandCompressor& comp,
-                    float masterGain);
+                    float masterGain,
+                    DiagnosticState* diagState = nullptr);
 
     // Load a named preset and apply it
     bool loadPreset(const juce::String& name,
@@ -43,7 +46,8 @@ public:
                     ConvolutionEngine& conv,
                     ExciterProcessor& exciter,
                     MultibandCompressor& comp,
-                    float& masterGain);
+                    float& masterGain,
+                    DiagnosticState* diagState = nullptr);
 
     // Get/set current preset name
     juce::String getCurrentPresetName() const { return currentPresetName; }
@@ -54,14 +58,16 @@ private:
                               const ExciterProcessor& exciter,
                               const MultibandCompressor& comp,
                               float masterGain,
-                              const juce::String& name) const;
+                              const juce::String& name,
+                              DiagnosticState* diagState) const;
 
     bool deserializeFromJson(const juce::var& json,
                              GongSynthesizer& synth,
                              ConvolutionEngine& conv,
                              ExciterProcessor& exciter,
                              MultibandCompressor& comp,
-                             float& masterGain);
+                             float& masterGain,
+                             DiagnosticState* diagState);
 
     juce::File presetsDirectory;
     juce::File irDirectory;

@@ -15,6 +15,8 @@ void GongSynthesizer::prepareToPlay(double newSampleRate, int samplesPerBlock)
     resonatorBank.prepare(sampleRate, blockSize);
     impulseGenerator.prepare(sampleRate, blockSize);
     syntheticImpulseGen.prepare(sampleRate, blockSize);
+    combinationToneBank.prepare(sampleRate, blockSize);
+    crashNoiseGenerator.prepare(sampleRate, blockSize);
 
     // Allocate processing buffers
     impulseBuffer.setSize(2, blockSize);
@@ -99,6 +101,13 @@ void GongSynthesizer::process(juce::AudioBuffer<float>& outputBuffer,
     juce::AudioBuffer<float> resonatorBlock(resonatorBuffer.getArrayOfWritePointers(), 2, numSamples);
     resonatorBank.process(impulseBlock, resonatorBlock);
 
+    // Step 12: Update and process combination tones
+    combinationToneBank.update(energyAccumulator, resonatorBank);
+    combinationToneBank.process(resonatorBlock);
+
+    // Step 13: Add crash noise at extreme energy levels
+    crashNoiseGenerator.process(energyAccumulator.getNormalizedGlobalEnergy(), resonatorBlock);
+
     // Add to output
     auto outputChannels = outputBuffer.getNumChannels();
     for (int channel = 0; channel < static_cast<int>(outputChannels); ++channel)
@@ -150,7 +159,12 @@ void GongSynthesizer::processMidiMessages(juce::MidiBuffer& midiMessages)
         if (excitationMode == ExcitationMode::SyntheticImpulse)
         {
             // Route through MidiControllerMock
-            if (midiControllerMock.processMidiMessage(message))
+            bool strikeTriggered = midiControllerMock.processMidiMessage(message);
+
+            // Step 3: Update damping state from CC64
+            energyAccumulator.setDampActive(midiControllerMock.isDampingActive());
+
+            if (strikeTriggered)
             {
                 // Strike triggered
                 const auto& desc = midiControllerMock.getCurrentDescriptor();
@@ -159,7 +173,7 @@ void GongSynthesizer::processMidiMessages(juce::MidiBuffer& midiMessages)
                 // Trigger synthetic impulse
                 syntheticImpulseGen.trigger(desc);
 
-                // Inject energy
+                // Inject energy with strike position modeling (Step 10)
                 float velocity = desc.velocityNorm();
                 injectStrike(velocity, resIndex);
 
@@ -196,16 +210,25 @@ void GongSynthesizer::processMidiMessages(juce::MidiBuffer& midiMessages)
 
 void GongSynthesizer::injectStrike(float velocity, int resonatorIndex)
 {
-    if (resonatorIndex < 0)
+    // Step 10: Strike position modal excitation patterns
+    // Maps padId (resonatorIndex) to different modal excitation weights
+    static const float positionScales[4][4] = {
+        // padId 0 = center: strong fundamental, weak overtones
+        { 1.0f, 0.3f, 0.1f, 0.05f },
+        // padId 1 = mid-radius: balanced excitation
+        { 0.6f, 1.0f, 0.7f, 0.3f },
+        // padId 2 = edge: weak fundamental, strong overtones
+        { 0.2f, 0.5f, 1.0f, 0.8f },
+        // padId 3 = boss (nipple): resonant peak in mid-high
+        { 0.4f, 0.8f, 0.4f, 1.0f }
+    };
+
+    int posIdx = (resonatorIndex >= 0 && resonatorIndex < 4) ? resonatorIndex : 0;
+
+    for (int band = 0; band < EnergyAccumulator::kNumBands; ++band)
     {
-        for (int band = 0; band < EnergyAccumulator::kNumBands; ++band)
-        {
-            energyAccumulator.injectEnergy(velocity, band);
-        }
-    }
-    else
-    {
-        energyAccumulator.injectEnergy(velocity, resonatorIndex);
+        float scaledVelocity = velocity * positionScales[posIdx][band];
+        energyAccumulator.injectEnergy(scaledVelocity, band);
     }
 }
 
@@ -261,6 +284,8 @@ void GongSynthesizer::reset()
     resonatorBank.reset();
     impulseGenerator.reset();
     syntheticImpulseGen.reset();
+    combinationToneBank.reset();
+    crashNoiseGenerator.reset();
 
     impulseBuffer.clear();
     resonatorBuffer.clear();

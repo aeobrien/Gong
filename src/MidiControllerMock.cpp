@@ -32,6 +32,10 @@ bool MidiControllerMock::processMidiMessage(const juce::MidiMessage& message)
             // Map 0-127 to 0-255
             descriptor.decayShape = static_cast<uint8_t>(value * 2);
         }
+        else if (cc == 64) // Sustain pedal -> damping toggle
+        {
+            dampingActive = (value >= 64);
+        }
 
         return false; // CC doesn't trigger a strike
     }

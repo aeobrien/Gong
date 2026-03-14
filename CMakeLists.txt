@@ -45,6 +45,16 @@ target_sources(GongSynth PRIVATE
 
     # UI
     src/IRWaveformComponent.cpp
+    src/DiagnosticWindow.cpp
+
+    # Diagnostics & Modulation
+    src/TestSignalGenerator.cpp
+    src/ModulationBus.cpp
+
+    # Nonlinear dynamics (Phase 4)
+    src/CombinationToneBank.cpp
+    src/CrashNoiseGenerator.cpp
+    src/MacroParameters.cpp
 )
 
 # Include paths for third-party libs

@@ -8,6 +8,12 @@
 #include "IRWaveformComponent.h"
 #include "PresetManager.h"
 #include "PerformanceServer.h"
+#include "DiagnosticState.h"
+#include "TestSignalGenerator.h"
+#include "ModulationBus.h"
+#include "DiagnosticWindow.h"
+#include "MacroParameters.h"
+#include "ModalTemplate.h"
 
 class MainComponent : public juce::AudioAppComponent,
                       private juce::MidiInputCallback,
@@ -62,6 +68,15 @@ private:
     MultibandCompressor multibandCompressor;
     PresetManager presetManager;
     std::unique_ptr<PerformanceServer> performanceServer;
+
+    // Diagnostics & modulation
+    DiagnosticState diagnosticState;
+    TestSignalGenerator testSignalGenerator;
+    ModulationBus modulationBus;
+    std::unique_ptr<DiagnosticWindow> diagnosticWindow;
+    juce::AudioBuffer<float> testBuffer;
+
+    void applyModulationOffsets();
 
     juce::AudioBuffer<float> synthBuffer;
     juce::AudioBuffer<float> audioInputBuffer;
@@ -172,24 +187,57 @@ private:
     juce::TextButton presetSaveButton { "Save" };
     juce::TextButton presetSaveAsButton { "Save As..." };
 
+    // Nonlinear Dynamics Controls (Phase 1-4)
+    juce::Slider couplingRateSlider;
+    juce::Label couplingRateLabel { {}, "Coupling" };
+    juce::Slider bloomThreshSlider;
+    juce::Label bloomThreshLabel { {}, "Bloom" };
+    juce::Slider glideDirectionSlider;
+    juce::Label glideDirectionLabel { {}, "Glide Dir" };
+    juce::Slider glideSensitivitySlider;
+    juce::Label glideSensitivityLabel { {}, "Glide Sens" };
+    juce::Slider postConvLowSlider;
+    juce::Label postConvLowLabel { {}, "Low EQ" };
+    juce::Slider postConvMidSlider;
+    juce::Label postConvMidLabel { {}, "Mid EQ" };
+    juce::Slider postConvHighSlider;
+    juce::Label postConvHighLabel { {}, "High EQ" };
+    juce::ComboBox modalTemplateCombo;
+    juce::Label modalTemplateLabel { {}, "Template" };
+    juce::TextButton loadIRBButton { "Load IR B..." };
+    juce::Label irBFileLabel { {}, "No IR B" };
+
+    // Macro knobs (Step 15)
+    MacroParameters macroParameters;
+    juce::Slider macroSliders[4];
+    juce::Label macroLabels[4];
+
     // Bottom Controls
     juce::Slider volumeSlider;
     juce::Label volumeLabel { {}, "Volume" };
     juce::TextButton panicButton { "PANIC" };
+    juce::TextButton diagnosticsButton { "Diagnostics" };
 
     // Display values
     float currentInputLevel = 0.0f;
     float currentGlobalEnergy = 0.0f;
 
-    // Debug level tracking (signal chain)
-    float debugLevelAfterSynth = 0.0f;
-    float debugLevelAfterConv = 0.0f;
-    float debugLevelAfterExciter = 0.0f;
-    float debugLevelAfterComp = 0.0f;
-    float debugLevelFinal = 0.0f;
-
     // Tooltip component
     juce::TooltipWindow tooltipWindow { this, 300 };
+
+    // Section enable toggles
+    juce::ToggleButton convSectionToggle { "On" };
+    juce::ToggleButton nlSectionToggle { "On" };
+    juce::ToggleButton macroSectionToggle { "On" };
+
+    // Section bounds (computed in resized, used in paint)
+    juce::Rectangle<int> inputSectionBounds, energySectionBounds, resonatorSectionBounds;
+    juce::Rectangle<int> convSectionBounds, nlSectionBounds, outputSectionBounds;
+    juce::Rectangle<int> macroSectionBounds, presetSectionBounds;
+
+    // Nonlinear dynamics / macro bypass flags
+    std::atomic<bool> nlDynamicsEnabled { true };
+    std::atomic<bool> macrosEnabled { true };
 
     // Directories
     juce::File sourceDirectory;
