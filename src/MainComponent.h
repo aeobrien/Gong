@@ -5,7 +5,6 @@
 #include "GongSynthesizer.h"
 #include "ExciterProcessor.h"
 #include "MultibandCompressor.h"
-#include "IRWaveformComponent.h"
 #include "PresetManager.h"
 #include "PerformanceServer.h"
 #include "DiagnosticState.h"
@@ -14,12 +13,19 @@
 #include "DiagnosticWindow.h"
 #include "MacroParameters.h"
 #include "ModalTemplate.h"
+#include "StrikeDescriptor.h"
+#include "ui/GongLookAndFeel.h"
+#include "ui/ModulePanel.h"
+#include "ui/RotaryKnob.h"
+#include "ui/MeterComponent.h"
+#include "ui/EnergyRingComponent.h"
+#include "ui/ResonatorGridComponent.h"
+#include "ui/PatchCableOverlay.h"
+#include "ui/ModuleDescriptions.h"
+#include "ui/ConvolutionContentComponent.h"
 
 class MainComponent : public juce::AudioAppComponent,
                       private juce::MidiInputCallback,
-                      private juce::Slider::Listener,
-                      private juce::Button::Listener,
-                      private juce::ComboBox::Listener,
                       private juce::Timer,
                       public PerformanceServer::Listener
 {
@@ -44,19 +50,28 @@ public:
     juce::String getCurrentIRName() override;
 
 private:
-    // Callbacks
+    // MIDI
     void handleIncomingMidiMessage(juce::MidiInput* source, const juce::MidiMessage& message) override;
-    void sliderValueChanged(juce::Slider* slider) override;
-    void buttonClicked(juce::Button* button) override;
-    void comboBoxChanged(juce::ComboBox* comboBox) override;
-
     void setMidiInput(int index);
     void updateMidiDeviceList();
+
+    // Audio processing
+    void applyModulationOffsets();
+
+    // UI helpers
+    void buildModulePanels();
+    void buildParamBindings();
+    void buildPatchCables();
     void loadIRFile();
-    void setupTooltips();
-    void updateResonatorFrequencyDisplay(int index);
+    void loadIRBFile();
     void updateUIFromState();
     void updatePresetComboBox();
+    void pushMeterData();
+    void pushEnergyData();
+    void pushEffectiveValues();
+
+    // Custom look and feel
+    GongLookAndFeel gongLnF;
 
     double currentSampleRate = 48000.0;
     int currentBlockSize = 256;
@@ -75,169 +90,84 @@ private:
     ModulationBus modulationBus;
     std::unique_ptr<DiagnosticWindow> diagnosticWindow;
     juce::AudioBuffer<float> testBuffer;
-
-    void applyModulationOffsets();
+    MacroParameters macroParameters;
 
     juce::AudioBuffer<float> synthBuffer;
     juce::AudioBuffer<float> audioInputBuffer;
 
-    // Current note for display
+    // State
     int lastPlayedNote = 60;
     float masterGain = 0.8f;
+    std::atomic<bool> nlDynamicsEnabled { true };
+    std::atomic<bool> macrosEnabled { true };
 
     // MIDI
     juce::MidiMessageCollector midiCollector;
-    juce::ComboBox midiInputList;
-    juce::Label midiInputListLabel;
-    int lastMidiInputIndex = 0;
     juce::Array<juce::MidiDeviceInfo> midiDevices;
+    int lastMidiInputIndex = 0;
 
-    // Excitation mode toggle
-    juce::ToggleButton audioInputModeButton { "Audio In" };
-    juce::ToggleButton syntheticModeButton { "Synthetic" };
-
-    // Input Section
-    juce::Label inputGainLabel { {}, "Input Gain" };
-    juce::Slider inputGainSlider;
-    juce::Label strikeThreshLabel { {}, "Strike Thresh" };
-    juce::Slider strikeThreshSlider;
-    juce::Label strikeHoldoffLabel { {}, "Holdoff" };
-    juce::Slider strikeHoldoffSlider;
-
-    // Energy Section
-    juce::Label energyDecayLabel { {}, "Decay" };
-    juce::Slider energyDecaySlider;
-    juce::Label energyInjectionLabel { {}, "Injection" };
-    juce::Slider energyInjectionSlider;
-    juce::Label energyPowerLabel { {}, "Power" };
-    juce::Slider energyPowerSlider;
-
-    // Global Resonator Controls
-    juce::Slider globalDecaySlider;
-    juce::Label globalDecayLabel { {}, "Decay" };
-    juce::Slider globalBrightnessSlider;
-    juce::Label globalBrightnessLabel { {}, "Brightness" };
-    juce::Slider globalSpreadLevelSlider;
-    juce::Label globalSpreadLevelLabel { {}, "Spread Lvl" };
-    juce::Slider globalSpreadPanWidthSlider;
-    juce::Label globalSpreadPanWidthLabel { {}, "Pan Width" };
-
-    // Per-Resonator Controls (4 resonators)
-    static constexpr int kNumResonators = 4;
-
-    // Column headers for resonator grid
-    juce::Label resHeaderOn { {}, "On" };
-    juce::Label resHeaderMode { {}, "Mode" };
-    juce::Label resHeaderFreq { {}, "Frequency" };
-    juce::Label resHeaderGain { {}, "Gain" };
-    juce::Label resHeaderBright { {}, "Bright" };
-    juce::Label resHeaderSpread { {}, "Spread" };
-    juce::Label resHeaderDetune { {}, "Detune" };
-    juce::Label resHeaderPan { {}, "Pan" };
-
-    struct ResonatorControls
-    {
-        juce::Label nameLabel;
-        juce::ToggleButton enableButton;
-        juce::ToggleButton freeModeButton { "Free" };
-        juce::ToggleButton snapModeButton { "Snap" };
-        juce::Slider freqSlider;
-        juce::ComboBox noteCombo;
-        juce::Slider gainSlider;
-        juce::Label freqValueLabel;
-        juce::Slider brightnessModSlider;
-        juce::Slider spreadModSlider;
-        juce::Slider detuneModSlider;
-        juce::Slider panModSlider;
-    };
-    std::array<ResonatorControls, kNumResonators> resonatorControls;
-
-    // Convolution Section
-    IRWaveformComponent irWaveform;
-    juce::TextButton loadIRButton { "Load IR..." };
-    juce::Label irFileLabel { {}, "No IR loaded" };
-    juce::Slider reverbMixSlider;
-    juce::Label reverbMixLabel { {}, "Mix" };
-    juce::Slider convGainSlider;
-    juce::Label convGainLabel { {}, "Gain" };
-
-    // Exciter Section
-    juce::ToggleButton exciterEnableButton { "Exciter" };
-    juce::Label exciterFreqLabel { {}, "HP Freq" };
-    juce::Slider exciterFreqSlider;
-    juce::Label exciterDriveLabel { {}, "Drive" };
-    juce::Slider exciterDriveSlider;
-    juce::Label exciterMixLabel { {}, "Mix" };
-    juce::Slider exciterMixSlider;
-
-    // Multiband Compressor Section
-    juce::ToggleButton compEnableButton { "Compressor" };
-    juce::Label compThreshLabel { {}, "Thresh" };
-    juce::Slider compThreshSlider;
-    juce::Label compRatioLabel { {}, "Ratio" };
-    juce::Slider compRatioSlider;
-    juce::Label compAttackLabel { {}, "Atk" };
-    juce::Slider compAttackSlider;
-    juce::Label compReleaseLabel { {}, "Rel" };
-    juce::Slider compReleaseSlider;
-
-    // Preset Section
+    // === Toolbar ===
+    juce::ComboBox midiInputList;
+    juce::Label midiInputListLabel { {}, "MIDI:" };
     juce::ComboBox presetComboBox;
-    juce::Label presetLabel { {}, "Preset" };
+    juce::Label presetLabel { {}, "Preset:" };
     juce::TextButton presetSaveButton { "Save" };
     juce::TextButton presetSaveAsButton { "Save As..." };
-
-    // Nonlinear Dynamics Controls (Phase 1-4)
-    juce::Slider couplingRateSlider;
-    juce::Label couplingRateLabel { {}, "Coupling" };
-    juce::Slider bloomThreshSlider;
-    juce::Label bloomThreshLabel { {}, "Bloom" };
-    juce::Slider glideDirectionSlider;
-    juce::Label glideDirectionLabel { {}, "Glide Dir" };
-    juce::Slider glideSensitivitySlider;
-    juce::Label glideSensitivityLabel { {}, "Glide Sens" };
-    juce::Slider postConvLowSlider;
-    juce::Label postConvLowLabel { {}, "Low EQ" };
-    juce::Slider postConvMidSlider;
-    juce::Label postConvMidLabel { {}, "Mid EQ" };
-    juce::Slider postConvHighSlider;
-    juce::Label postConvHighLabel { {}, "High EQ" };
-    juce::ComboBox modalTemplateCombo;
-    juce::Label modalTemplateLabel { {}, "Template" };
-    juce::TextButton loadIRBButton { "Load IR B..." };
-    juce::Label irBFileLabel { {}, "No IR B" };
-
-    // Macro knobs (Step 15)
-    MacroParameters macroParameters;
-    juce::Slider macroSliders[4];
-    juce::Label macroLabels[4];
-
-    // Bottom Controls
-    juce::Slider volumeSlider;
-    juce::Label volumeLabel { {}, "Volume" };
+    RotaryKnob volumeKnob { "Volume", {}, 0.0, 1.0, 0.01 };
     juce::TextButton panicButton { "PANIC" };
-    juce::TextButton diagnosticsButton { "Diagnostics" };
+    juce::TextButton diagnosticsButton { "Diag" };
 
-    // Display values
-    float currentInputLevel = 0.0f;
-    float currentGlobalEnergy = 0.0f;
+    // === Macro Sidebar ===
+    RotaryKnob macroKnobs[4] {
+        { "Size",      {}, 0.0, 1.0, 0.01 },
+        { "Material",  {}, 0.0, 1.0, 0.01 },
+        { "Intensity", {}, 0.0, 1.0, 0.01 },
+        { "Space",     {}, 0.0, 1.0, 0.01 }
+    };
 
-    // Tooltip component
+    // === Module Panels ===
+    ModulePanel inputPanel;
+    ModulePanel energyPanel;
+    ModulePanel resonatorPanel;
+    ModulePanel comboTonePanel;
+    ModulePanel crashPanel;
+    ModulePanel convolutionPanel;
+    ModulePanel exciterPanel;
+    ModulePanel compressorPanel;
+
+    // === Custom content for modules ===
+    EnergyRingComponent energyRing;
+    ResonatorGridComponent resonatorGrid;
+    ConvolutionContentComponent convolutionContent;
+
+    // Input extras
+    juce::ToggleButton audioInputModeButton { "Audio In" };
+    juce::ToggleButton syntheticModeButton { "Synthetic" };
+    juce::TextButton auditionButton { "Audition" };
+
+    // Synthetic impulse shaping
+    StrikeDescriptor auditionDescriptor;
+
+    // Modal template
+    juce::ComboBox modalTemplateCombo;
+    juce::Label modalTemplateLabel { {}, "Template:" };
+
+    // Output meter (bottom bar instead of panel)
+    MeterComponent outputMeter;
+
+    // Patch cable overlay
+    PatchCableOverlay patchCables;
+
+    // === Parameter Binding System ===
+    struct ParamBinding {
+        std::function<void(float)> setter;
+        std::function<float()> getter;
+        std::function<float()> effectiveGetter;
+    };
+    std::unordered_map<juce::String, ParamBinding> paramBindings;
+
+    // Tooltip
     juce::TooltipWindow tooltipWindow { this, 300 };
-
-    // Section enable toggles
-    juce::ToggleButton convSectionToggle { "On" };
-    juce::ToggleButton nlSectionToggle { "On" };
-    juce::ToggleButton macroSectionToggle { "On" };
-
-    // Section bounds (computed in resized, used in paint)
-    juce::Rectangle<int> inputSectionBounds, energySectionBounds, resonatorSectionBounds;
-    juce::Rectangle<int> convSectionBounds, nlSectionBounds, outputSectionBounds;
-    juce::Rectangle<int> macroSectionBounds, presetSectionBounds;
-
-    // Nonlinear dynamics / macro bypass flags
-    std::atomic<bool> nlDynamicsEnabled { true };
-    std::atomic<bool> macrosEnabled { true };
 
     // Directories
     juce::File sourceDirectory;

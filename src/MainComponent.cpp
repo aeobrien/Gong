@@ -1,9 +1,14 @@
 #include "MainComponent.h"
 #include <chrono>
 
+//==============================================================================
+// Construction / Destruction
+//==============================================================================
+
 MainComponent::MainComponent()
 {
-    setSize(1050, 1250);
+    setSize(1400, 900);
+    setLookAndFeel(&gongLnF);
 
     // Resolve directories relative to source
     sourceDirectory = juce::File(__FILE__).getParentDirectory().getParentDirectory();
@@ -11,380 +16,167 @@ MainComponent::MainComponent()
     presetsDirectory = sourceDirectory.getChildFile("presets");
     webDirectory = sourceDirectory.getChildFile("web");
 
-    // Initialize preset manager
     presetManager.setPresetsDirectory(presetsDirectory);
     presetManager.setIRDirectory(irDirectory);
 
-    // MIDI input selector
+    // === Toolbar: MIDI ===
     addAndMakeVisible(midiInputListLabel);
-    midiInputListLabel.setText("MIDI:", juce::dontSendNotification);
-
     addAndMakeVisible(midiInputList);
     midiInputList.setTextWhenNoChoicesAvailable("No MIDI Inputs");
-    midiInputList.addListener(this);
-
+    midiInputList.onChange = [this] { setMidiInput(midiInputList.getSelectedItemIndex()); };
     updateMidiDeviceList();
     if (midiDevices.size() > 0)
         setMidiInput(0);
 
-    // === EXCITATION MODE ===
-    audioInputModeButton.setRadioGroupId(999);
-    audioInputModeButton.setToggleState(true, juce::dontSendNotification);
-    audioInputModeButton.addListener(this);
-    addAndMakeVisible(audioInputModeButton);
-
-    syntheticModeButton.setRadioGroupId(999);
-    syntheticModeButton.addListener(this);
-    addAndMakeVisible(syntheticModeButton);
-
-    // === INPUT SECTION ===
-    addAndMakeVisible(inputGainLabel);
-    addAndMakeVisible(inputGainSlider);
-    inputGainSlider.setRange(0.0, 4.0, 0.01);
-    inputGainSlider.setValue(1.0);
-    inputGainSlider.addListener(this);
-
-    addAndMakeVisible(strikeThreshLabel);
-    addAndMakeVisible(strikeThreshSlider);
-    strikeThreshSlider.setRange(0.01, 0.5, 0.01);
-    strikeThreshSlider.setValue(0.1);
-    strikeThreshSlider.addListener(this);
-
-    addAndMakeVisible(strikeHoldoffLabel);
-    addAndMakeVisible(strikeHoldoffSlider);
-    strikeHoldoffSlider.setRange(10.0, 200.0, 1.0);
-    strikeHoldoffSlider.setValue(50.0);
-    strikeHoldoffSlider.setTextValueSuffix(" ms");
-    strikeHoldoffSlider.addListener(this);
-
-    // === ENERGY SECTION ===
-    addAndMakeVisible(energyDecayLabel);
-    addAndMakeVisible(energyDecaySlider);
-    energyDecaySlider.setRange(500.0, 5000.0, 10.0);
-    energyDecaySlider.setValue(2000.0);
-    energyDecaySlider.setTextValueSuffix(" ms");
-    energyDecaySlider.addListener(this);
-
-    addAndMakeVisible(energyInjectionLabel);
-    addAndMakeVisible(energyInjectionSlider);
-    energyInjectionSlider.setRange(0.1, 3.0, 0.01);
-    energyInjectionSlider.setValue(1.0);
-    energyInjectionSlider.addListener(this);
-
-    addAndMakeVisible(energyPowerLabel);
-    addAndMakeVisible(energyPowerSlider);
-    energyPowerSlider.setRange(0.5, 3.0, 0.01);
-    energyPowerSlider.setValue(1.5);
-    energyPowerSlider.addListener(this);
-
-    // === GLOBAL RESONATOR CONTROLS ===
-    addAndMakeVisible(globalDecayLabel);
-    addAndMakeVisible(globalDecaySlider);
-    globalDecaySlider.setRange(0.5, 15.0, 0.1);
-    globalDecaySlider.setValue(4.0);
-    globalDecaySlider.setTextValueSuffix(" s");
-    globalDecaySlider.addListener(this);
-
-    addAndMakeVisible(globalBrightnessLabel);
-    addAndMakeVisible(globalBrightnessSlider);
-    globalBrightnessSlider.setRange(0.0, 1.0, 0.01);
-    globalBrightnessSlider.setValue(0.7);
-    globalBrightnessSlider.addListener(this);
-
-    addAndMakeVisible(globalSpreadLevelLabel);
-    addAndMakeVisible(globalSpreadLevelSlider);
-    globalSpreadLevelSlider.setRange(0.0, 1.0, 0.01);
-    globalSpreadLevelSlider.setValue(0.5);
-    globalSpreadLevelSlider.addListener(this);
-
-    addAndMakeVisible(globalSpreadPanWidthLabel);
-    addAndMakeVisible(globalSpreadPanWidthSlider);
-    globalSpreadPanWidthSlider.setRange(0.0, 1.0, 0.01);
-    globalSpreadPanWidthSlider.setValue(1.0);
-    globalSpreadPanWidthSlider.addListener(this);
-
-    // === RESONATOR COLUMN HEADERS ===
-    auto setupHeader = [](juce::Label& label) {
-        label.setJustificationType(juce::Justification::centred);
-        label.setFont(juce::FontOptions(11.0f));
-    };
-
-    addAndMakeVisible(resHeaderOn); setupHeader(resHeaderOn);
-    addAndMakeVisible(resHeaderMode); setupHeader(resHeaderMode);
-    addAndMakeVisible(resHeaderFreq); setupHeader(resHeaderFreq);
-    addAndMakeVisible(resHeaderGain); setupHeader(resHeaderGain);
-    addAndMakeVisible(resHeaderBright); setupHeader(resHeaderBright);
-    addAndMakeVisible(resHeaderSpread); setupHeader(resHeaderSpread);
-    addAndMakeVisible(resHeaderDetune); setupHeader(resHeaderDetune);
-    addAndMakeVisible(resHeaderPan); setupHeader(resHeaderPan);
-
-    // === PER-RESONATOR CONTROLS ===
-    const char* noteNames[] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-    float defaultFreqs[] = { 110.0f, 220.0f, 330.0f, 440.0f };
-    int defaultNotes[] = { 45, 57, 64, 69 };
-
-    for (int i = 0; i < kNumResonators; ++i)
-    {
-        auto& rc = resonatorControls[i];
-
-        rc.nameLabel.setText("R" + juce::String(i + 1), juce::dontSendNotification);
-        rc.nameLabel.setFont(juce::FontOptions(12.0f).withStyle("Bold"));
-        addAndMakeVisible(rc.nameLabel);
-
-        rc.enableButton.setToggleState(true, juce::dontSendNotification);
-        rc.enableButton.addListener(this);
-        addAndMakeVisible(rc.enableButton);
-
-        // Mode toggle
-        rc.freeModeButton.setRadioGroupId(100 + i);
-        rc.freeModeButton.setToggleState(true, juce::dontSendNotification);
-        rc.freeModeButton.addListener(this);
-        addAndMakeVisible(rc.freeModeButton);
-
-        rc.snapModeButton.setRadioGroupId(100 + i);
-        rc.snapModeButton.addListener(this);
-        addAndMakeVisible(rc.snapModeButton);
-
-        // Frequency slider (Free mode)
-        rc.freqSlider.setRange(20.0, 2000.0, 1.0);
-        rc.freqSlider.setSkewFactorFromMidPoint(220.0);
-        rc.freqSlider.setValue(defaultFreqs[i]);
-        rc.freqSlider.setTextValueSuffix(" Hz");
-        rc.freqSlider.addListener(this);
-        rc.freqSlider.setVisible(true);
-        addAndMakeVisible(rc.freqSlider);
-
-        // MIDI note combo (Snap mode)
-        for (int note = 24; note <= 96; ++note)
-        {
-            int octave = (note / 12) - 1;
-            int noteIndex = note % 12;
-            juce::String noteName = juce::String(noteNames[noteIndex]) + juce::String(octave);
-            rc.noteCombo.addItem(noteName, note + 1);
-        }
-        rc.noteCombo.setSelectedId(defaultNotes[i] + 1, juce::dontSendNotification);
-        rc.noteCombo.addListener(this);
-        addChildComponent(rc.noteCombo);
-
-        // Gain slider
-        rc.gainSlider.setRange(-24.0, 12.0, 0.1);
-        rc.gainSlider.setValue(0.0);
-        rc.gainSlider.setSliderStyle(juce::Slider::LinearHorizontal);
-        rc.gainSlider.setTextBoxStyle(juce::Slider::NoTextBox, true, 0, 0);
-        rc.gainSlider.addListener(this);
-        addAndMakeVisible(rc.gainSlider);
-
-        // Frequency display
-        rc.freqValueLabel.setText(juce::String((int)defaultFreqs[i]) + " Hz", juce::dontSendNotification);
-        rc.freqValueLabel.setJustificationType(juce::Justification::centred);
-        rc.freqValueLabel.setFont(juce::FontOptions(10.0f));
-        addAndMakeVisible(rc.freqValueLabel);
-
-        // Energy modulation sliders
-        auto setupModSlider = [this](juce::Slider& slider, float defaultVal) {
-            slider.setRange(0.0, 1.0, 0.01);
-            slider.setValue(defaultVal);
-            slider.setSliderStyle(juce::Slider::LinearHorizontal);
-            slider.setTextBoxStyle(juce::Slider::NoTextBox, true, 0, 0);
-            slider.addListener(this);
-            addAndMakeVisible(slider);
-        };
-
-        setupModSlider(rc.brightnessModSlider, 0.5f);
-        setupModSlider(rc.spreadModSlider, 0.3f);
-        setupModSlider(rc.detuneModSlider, 0.2f);
-        setupModSlider(rc.panModSlider, 0.3f);
-    }
-
-    // === CONVOLUTION SECTION ===
-    addAndMakeVisible(irWaveform);
-
-    addAndMakeVisible(loadIRButton);
-    loadIRButton.addListener(this);
-
-    addAndMakeVisible(irFileLabel);
-
-    addAndMakeVisible(reverbMixLabel);
-    addAndMakeVisible(reverbMixSlider);
-    reverbMixSlider.setRange(0.0, 1.0, 0.01);
-    reverbMixSlider.setValue(0.4);
-    reverbMixSlider.addListener(this);
-
-    addAndMakeVisible(convGainLabel);
-    addAndMakeVisible(convGainSlider);
-    convGainSlider.setRange(-24.0, 24.0, 0.1);
-    convGainSlider.setValue(0.0);
-    convGainSlider.setTextValueSuffix(" dB");
-    convGainSlider.addListener(this);
-
-    // === EXCITER SECTION ===
-    addAndMakeVisible(exciterEnableButton);
-    exciterEnableButton.setToggleState(true, juce::dontSendNotification);
-    exciterEnableButton.addListener(this);
-
-    addAndMakeVisible(exciterFreqLabel);
-    addAndMakeVisible(exciterFreqSlider);
-    exciterFreqSlider.setRange(200.0, 2000.0, 1.0);
-    exciterFreqSlider.setValue(500.0);
-    exciterFreqSlider.setTextValueSuffix(" Hz");
-    exciterFreqSlider.addListener(this);
-
-    addAndMakeVisible(exciterDriveLabel);
-    addAndMakeVisible(exciterDriveSlider);
-    exciterDriveSlider.setRange(1.0, 5.0, 0.1);
-    exciterDriveSlider.setValue(2.0);
-    exciterDriveSlider.addListener(this);
-
-    addAndMakeVisible(exciterMixLabel);
-    addAndMakeVisible(exciterMixSlider);
-    exciterMixSlider.setRange(0.0, 1.0, 0.01);
-    exciterMixSlider.setValue(0.3);
-    exciterMixSlider.addListener(this);
-
-    // === MULTIBAND COMPRESSOR SECTION ===
-    addAndMakeVisible(compEnableButton);
-    compEnableButton.setToggleState(true, juce::dontSendNotification);
-    compEnableButton.addListener(this);
-
-    addAndMakeVisible(compThreshLabel);
-    addAndMakeVisible(compThreshSlider);
-    compThreshSlider.setRange(-40.0, 0.0, 0.1);
-    compThreshSlider.setValue(-12.0);
-    compThreshSlider.setTextValueSuffix(" dB");
-    compThreshSlider.addListener(this);
-
-    addAndMakeVisible(compRatioLabel);
-    addAndMakeVisible(compRatioSlider);
-    compRatioSlider.setRange(1.0, 20.0, 0.1);
-    compRatioSlider.setValue(4.0);
-    compRatioSlider.addListener(this);
-
-    addAndMakeVisible(compAttackLabel);
-    addAndMakeVisible(compAttackSlider);
-    compAttackSlider.setRange(1.0, 100.0, 1.0);
-    compAttackSlider.setValue(10.0);
-    compAttackSlider.setTextValueSuffix(" ms");
-    compAttackSlider.addListener(this);
-
-    addAndMakeVisible(compReleaseLabel);
-    addAndMakeVisible(compReleaseSlider);
-    compReleaseSlider.setRange(10.0, 500.0, 1.0);
-    compReleaseSlider.setValue(100.0);
-    compReleaseSlider.setTextValueSuffix(" ms");
-    compReleaseSlider.addListener(this);
-
-    // === PRESET SECTION ===
+    // === Toolbar: Preset ===
     addAndMakeVisible(presetLabel);
     addAndMakeVisible(presetComboBox);
-    presetComboBox.addListener(this);
+    presetComboBox.onChange = [this] {
+        auto name = presetComboBox.getText();
+        if (name.isNotEmpty())
+        {
+            if (presetManager.loadPreset(name, gongSynth, convolutionEngine,
+                                          exciterProcessor, multibandCompressor, masterGain, &diagnosticState))
+            {
+                updateUIFromState();
+                if (convolutionEngine.isLoaded())
+                    convolutionContent.getIRWaveform().setIR(convolutionEngine.getIRBuffer(), convolutionEngine.getIRSampleRate());
+            }
+        }
+    };
     updatePresetComboBox();
 
     addAndMakeVisible(presetSaveButton);
-    presetSaveButton.addListener(this);
+    presetSaveButton.onClick = [this] {
+        auto name = presetManager.getCurrentPresetName();
+        if (name.isEmpty()) name = "Untitled";
+        presetManager.savePreset(name, gongSynth, convolutionEngine, exciterProcessor, multibandCompressor, masterGain, &diagnosticState);
+        updatePresetComboBox();
+    };
 
     addAndMakeVisible(presetSaveAsButton);
-    presetSaveAsButton.addListener(this);
+    presetSaveAsButton.onClick = [this] {
+        auto* alertWindow = new juce::AlertWindow("Save Preset As", "Enter preset name:", juce::MessageBoxIconType::QuestionIcon);
+        alertWindow->addTextEditor("name", presetManager.getCurrentPresetName(), "Name:");
+        alertWindow->addButton("Save", 1);
+        alertWindow->addButton("Cancel", 0);
+        alertWindow->enterModalState(true, juce::ModalCallbackFunction::create([this, alertWindow](int result) {
+            if (result == 1)
+            {
+                auto name = alertWindow->getTextEditorContents("name");
+                if (name.isNotEmpty())
+                {
+                    presetManager.savePreset(name, gongSynth, convolutionEngine, exciterProcessor, multibandCompressor, masterGain, &diagnosticState);
+                    updatePresetComboBox();
+                }
+            }
+            delete alertWindow;
+        }));
+    };
 
-    // === NONLINEAR DYNAMICS CONTROLS ===
-    addAndMakeVisible(couplingRateLabel);
-    addAndMakeVisible(couplingRateSlider);
-    couplingRateSlider.setRange(0.0, 0.01, 0.0001);
-    couplingRateSlider.setValue(0.001);
-    couplingRateSlider.addListener(this);
+    // === Toolbar: Macro knobs ===
+    for (int i = 0; i < 4; ++i)
+    {
+        macroKnobs[i].getSlider().setValue(0.5, juce::dontSendNotification);
+        macroKnobs[i].getSlider().onValueChange = [this, i] {
+            macroParameters.setMacro(i, static_cast<float>(macroKnobs[i].getSlider().getValue()));
+        };
+        macroKnobs[i].setTooltipText(ModuleDescriptions::getMacroDescription(i));
+        macroKnobs[i].setCenterValueDisplay(true);
+        addAndMakeVisible(macroKnobs[i]);
+    }
 
-    addAndMakeVisible(bloomThreshLabel);
-    addAndMakeVisible(bloomThreshSlider);
-    bloomThreshSlider.setRange(0.1, 1.0, 0.01);
-    bloomThreshSlider.setValue(0.7);
-    bloomThreshSlider.addListener(this);
+    // === Toolbar: Volume ===
+    volumeKnob.getSlider().setValue(0.8, juce::dontSendNotification);
+    volumeKnob.getSlider().onValueChange = [this] { masterGain = static_cast<float>(volumeKnob.getSlider().getValue()); };
+    addAndMakeVisible(volumeKnob);
 
-    addAndMakeVisible(glideDirectionLabel);
-    addAndMakeVisible(glideDirectionSlider);
-    glideDirectionSlider.setRange(-1.0, 1.0, 0.01);
-    glideDirectionSlider.setValue(1.0);
-    glideDirectionSlider.addListener(this);
+    addAndMakeVisible(panicButton);
+    panicButton.onClick = [this] { gongSynth.panic(); };
 
-    addAndMakeVisible(glideSensitivityLabel);
-    addAndMakeVisible(glideSensitivitySlider);
-    glideSensitivitySlider.setRange(0.0, 200.0, 1.0);
-    glideSensitivitySlider.setValue(80.0);
-    glideSensitivitySlider.addListener(this);
+    addAndMakeVisible(diagnosticsButton);
+    diagnosticsButton.onClick = [this] {
+        if (!diagnosticWindow || !diagnosticWindow->isVisible())
+            diagnosticWindow = std::make_unique<DiagnosticWindow>(diagnosticState);
+        else
+            diagnosticWindow->setVisible(true);
+    };
 
-    addAndMakeVisible(postConvLowLabel);
-    addAndMakeVisible(postConvLowSlider);
-    postConvLowSlider.setRange(-12.0, 12.0, 0.1);
-    postConvLowSlider.setValue(0.0);
-    postConvLowSlider.addListener(this);
+    // === Input extras ===
+    audioInputModeButton.setRadioGroupId(999);
+    audioInputModeButton.setToggleState(true, juce::dontSendNotification);
+    audioInputModeButton.onClick = [this] { gongSynth.setExcitationMode(GongSynthesizer::ExcitationMode::AudioInput); };
+    addAndMakeVisible(audioInputModeButton);
 
-    addAndMakeVisible(postConvMidLabel);
-    addAndMakeVisible(postConvMidSlider);
-    postConvMidSlider.setRange(-12.0, 12.0, 0.1);
-    postConvMidSlider.setValue(0.0);
-    postConvMidSlider.addListener(this);
+    syntheticModeButton.setRadioGroupId(999);
+    syntheticModeButton.onClick = [this] { gongSynth.setExcitationMode(GongSynthesizer::ExcitationMode::SyntheticImpulse); };
+    addAndMakeVisible(syntheticModeButton);
 
-    addAndMakeVisible(postConvHighLabel);
-    addAndMakeVisible(postConvHighSlider);
-    postConvHighSlider.setRange(-12.0, 12.0, 0.1);
-    postConvHighSlider.setValue(0.0);
-    postConvHighSlider.addListener(this);
+    auditionButton.onClick = [this] {
+        // Switch to synthetic mode if not already
+        gongSynth.setExcitationMode(GongSynthesizer::ExcitationMode::SyntheticImpulse);
+        syntheticModeButton.setToggleState(true, juce::dontSendNotification);
 
+        // Read current strike shaping values from the input panel knobs
+        if (auto* s = inputPanel.getSlider("strikeAttack"))
+            auditionDescriptor.attackSlope = static_cast<uint8_t>(s->getValue());
+        if (auto* s = inputPanel.getSlider("strikeBright"))
+            auditionDescriptor.spectralCentroid = static_cast<uint16_t>(s->getValue());
+        if (auto* s = inputPanel.getSlider("strikeHF"))
+            auditionDescriptor.hfEnergyRatio = static_cast<uint8_t>(s->getValue());
+        if (auto* s = inputPanel.getSlider("strikeDecay"))
+            auditionDescriptor.decayShape = static_cast<uint8_t>(s->getValue());
+
+        gongSynth.getSyntheticImpulseGenerator().trigger(auditionDescriptor);
+
+        // Inject energy into all bands
+        float velocity = auditionDescriptor.velocityNorm();
+        for (int band = 0; band < EnergyAccumulator::kNumBands; ++band)
+            gongSynth.getEnergyAccumulator().injectEnergy(velocity, band);
+    };
+    addAndMakeVisible(auditionButton);
+
+    // === Modal template ===
     addAndMakeVisible(modalTemplateLabel);
     addAndMakeVisible(modalTemplateCombo);
     modalTemplateCombo.addItem("Manual", 1);
     for (int i = 0; i < kNumTemplates; ++i)
         modalTemplateCombo.addItem(kAllTemplates[i]->name, i + 2);
     modalTemplateCombo.setSelectedId(1, juce::dontSendNotification);
-    modalTemplateCombo.addListener(this);
+    modalTemplateCombo.onChange = [this] {
+        int id = modalTemplateCombo.getSelectedId();
+        if (id > 1)
+        {
+            float fundamental = gongSynth.getResonatorBank().getResonator(0).getEffectiveFrequency();
+            gongSynth.getResonatorBank().applyModalTemplate(id - 2, fundamental);
+            resonatorGrid.updateFromState();
+        }
+    };
 
-    addAndMakeVisible(loadIRBButton);
-    loadIRBButton.addListener(this);
-    addAndMakeVisible(irBFileLabel);
+    // === Convolution content (IR waveform + load buttons) ===
+    convolutionContent.getLoadIRButton().onClick = [this] { loadIRFile(); };
+    convolutionContent.getLoadIRBButton().onClick = [this] { loadIRBFile(); };
 
-    // Section enable toggles
-    addAndMakeVisible(convSectionToggle);
-    convSectionToggle.setToggleState(true, juce::dontSendNotification);
-    convSectionToggle.addListener(this);
-    convSectionToggle.setTooltip("Enable/disable convolution reverb processing");
+    // === Build module panels ===
+    buildModulePanels();
+    buildParamBindings();
 
-    addAndMakeVisible(nlSectionToggle);
-    nlSectionToggle.setToggleState(true, juce::dontSendNotification);
-    nlSectionToggle.addListener(this);
-    nlSectionToggle.setTooltip("Enable/disable nonlinear dynamics (coupling, bloom, pitch glide)");
+    // === Patch cables ===
+    addAndMakeVisible(patchCables);
+    buildPatchCables();
 
-    addAndMakeVisible(macroSectionToggle);
-    macroSectionToggle.setToggleState(true, juce::dontSendNotification);
-    macroSectionToggle.addListener(this);
-    macroSectionToggle.setTooltip("Enable/disable macro parameter offsets");
+    // Custom content bindings
+    energyPanel.setCustomContent(&energyRing);
+    resonatorGrid.setResonatorBank(&gongSynth.getResonatorBank());
+    resonatorPanel.setCustomContent(&resonatorGrid);
+    convolutionPanel.setCustomContent(&convolutionContent);
 
-    // Macro knobs
-    static const char* macroNames[] = { "Size", "Material", "Intensity", "Space" };
-    for (int i = 0; i < 4; ++i)
-    {
-        macroLabels[i].setText(macroNames[i], juce::dontSendNotification);
-        addAndMakeVisible(macroLabels[i]);
-        addAndMakeVisible(macroSliders[i]);
-        macroSliders[i].setRange(0.0, 1.0, 0.01);
-        macroSliders[i].setValue(0.5);
-        macroSliders[i].addListener(this);
-    }
+    // Output meter in bottom bar
+    outputMeter.setMeter(&diagnosticState.output);
+    outputMeter.setColour(juce::Colour(0xff78909c));
+    addAndMakeVisible(outputMeter);
 
-    // === BOTTOM CONTROLS ===
-    addAndMakeVisible(volumeLabel);
-    addAndMakeVisible(volumeSlider);
-    volumeSlider.setRange(0.0, 1.0, 0.01);
-    volumeSlider.setValue(0.8);
-    volumeSlider.addListener(this);
-
-    addAndMakeVisible(panicButton);
-    panicButton.addListener(this);
-
-    addAndMakeVisible(diagnosticsButton);
-    diagnosticsButton.addListener(this);
-
-    // Setup tooltips
-    setupTooltips();
-
-    // Request microphone permission
+    // Request audio
     if (juce::RuntimePermissions::isRequired(juce::RuntimePermissions::recordAudio)
         && !juce::RuntimePermissions::isGranted(juce::RuntimePermissions::recordAudio))
     {
@@ -397,7 +189,7 @@ MainComponent::MainComponent()
         setAudioChannels(2, 2);
     }
 
-    // Request larger buffer size to avoid overloads with convolution
+    // Request larger buffer
     {
         auto setup = deviceManager.getAudioDeviceSetup();
         if (setup.bufferSize < 2048)
@@ -407,7 +199,7 @@ MainComponent::MainComponent()
         }
     }
 
-    // Start performance server
+    // Performance server
     performanceServer = std::make_unique<PerformanceServer>(*this, 8080);
     performanceServer->setWebRoot(webDirectory);
     performanceServer->startServer();
@@ -415,67 +207,386 @@ MainComponent::MainComponent()
     startTimerHz(15);
 }
 
-void MainComponent::setupTooltips()
+MainComponent::~MainComponent()
 {
-    inputGainSlider.setTooltip("Amplifies incoming audio before strike detection and resonator excitation");
-    strikeThreshSlider.setTooltip("Audio level threshold that triggers energy injection (lower = more sensitive)");
-    strikeHoldoffSlider.setTooltip("Minimum time between strike detections to prevent retriggering");
-
-    energyDecaySlider.setTooltip("How long accumulated energy takes to fade out (longer = sustained brightness)");
-    energyInjectionSlider.setTooltip("How much energy is added per strike (higher = faster energy buildup)");
-    energyPowerSlider.setTooltip("Shapes the velocity-to-energy curve (1.0=linear, >1=emphasize loud hits, <1=emphasize soft hits)");
-
-    globalDecaySlider.setTooltip("How long resonators ring after excitation (filter Q derived from this)");
-    globalBrightnessSlider.setTooltip("Base tonal brightness before energy modulation (affects filter Q)");
-    globalSpreadLevelSlider.setTooltip("Level of the 6 spread voices relative to center voice");
-    globalSpreadPanWidthSlider.setTooltip("Stereo width of spread voices (0=mono, 1=full stereo)");
-
-    audioInputModeButton.setTooltip("Use microphone/line input as excitation source");
-    syntheticModeButton.setTooltip("Use MIDI controller to generate shaped noise bursts");
-
-    for (int i = 0; i < kNumResonators; ++i)
-    {
-        auto& rc = resonatorControls[i];
-        rc.enableButton.setTooltip("Enable/disable this resonator");
-        rc.freeModeButton.setTooltip("Free mode: set frequency directly in Hz");
-        rc.snapModeButton.setTooltip("Snap mode: set frequency by MIDI note");
-        rc.freqSlider.setTooltip("Resonator center frequency in Hz");
-        rc.noteCombo.setTooltip("Resonator frequency as MIDI note");
-        rc.gainSlider.setTooltip("Individual resonator output level (-24 to +12 dB)");
-        rc.brightnessModSlider.setTooltip("How much energy increases brightness/Q (0=none, 1=full)");
-        rc.spreadModSlider.setTooltip("How much energy increases spread voice level (0=none, 1=full)");
-        rc.detuneModSlider.setTooltip("How much energy increases spread voice detuning (0=none, 1=full)");
-        rc.panModSlider.setTooltip("How much energy increases stereo width (0=none, 1=full)");
-    }
-
-    loadIRButton.setTooltip("Load an impulse response WAV file for convolution reverb");
-    reverbMixSlider.setTooltip("Dry/wet mix for convolution reverb (0=dry, 1=wet)");
-    convGainSlider.setTooltip("Output gain for convolution reverb");
-
-    exciterEnableButton.setTooltip("Enable harmonic exciter (adds brightness via saturation)");
-    exciterFreqSlider.setTooltip("Highpass frequency - only frequencies above this are excited");
-    exciterDriveSlider.setTooltip("Saturation amount (higher = more harmonics)");
-    exciterMixSlider.setTooltip("Dry/wet mix for exciter (0=dry, 1=wet)");
-
-    compEnableButton.setTooltip("Enable 3-band multiband compressor");
-    compThreshSlider.setTooltip("Level above which compression begins");
-    compRatioSlider.setTooltip("Compression ratio (4:1 means 4dB over threshold becomes 1dB)");
-    compAttackSlider.setTooltip("How fast compressor responds to transients");
-    compReleaseSlider.setTooltip("How fast compressor releases after signal drops");
-
-    volumeSlider.setTooltip("Master output volume");
-    panicButton.setTooltip("Immediately silence all audio and reset energy");
+    stopTimer();
+    diagnosticWindow.reset();
+    if (performanceServer)
+        performanceServer->stopServer();
+    shutdownAudio();
+    for (auto& device : midiDevices)
+        deviceManager.setMidiInputDeviceEnabled(device.identifier, false);
+    setLookAndFeel(nullptr);
 }
 
-void MainComponent::updateResonatorFrequencyDisplay(int index)
+//==============================================================================
+// Module Panel Construction
+//==============================================================================
+
+void MainComponent::buildModulePanels()
 {
-    if (index < 0 || index >= kNumResonators) return;
+    // --- Input / Strike Detection ---
+    {
+        ModuleDescriptor desc;
+        desc.id = "input";
+        desc.info = &ModuleDescriptions::getInputModule();
+        desc.knobs = {
+            { "inputGain",     "Gain",      {},       0.0, 4.0, 0.01, 1.0 },
+            { "threshold",     "Threshold", {},       0.01, 0.5, 0.01, 0.1 },
+            { "holdoff",       "Holdoff",   " ms",    10.0, 200.0, 1.0, 50.0 },
+            { "strikeAttack",  "Attack",    {},       0.0, 255.0, 1.0, 180.0 },
+            { "strikeBright",  "Bright",    " Hz",    200.0, 15000.0, 10.0, 3000.0 },
+            { "strikeHF",      "HF Mix",    {},       0.0, 255.0, 1.0, 128.0 },
+            { "strikeDecay",   "Tail",      {},       0.0, 255.0, 1.0, 160.0 },
+        };
+        desc.hasInputMeter = true;
+        desc.hasOutputMeter = false;
+        inputPanel.configure(desc);
+        addAndMakeVisible(inputPanel);
 
-    auto& rc = resonatorControls[index];
-    auto& resonator = gongSynth.getResonatorBank().getResonator(index);
+        // Initialize audition descriptor defaults
+        auditionDescriptor.velocity = 100;
+        auditionDescriptor.attackSlope = 180;
+        auditionDescriptor.spectralCentroid = 3000;
+        auditionDescriptor.hfEnergyRatio = 128;
+        auditionDescriptor.decayShape = 160;
+        auditionDescriptor.padId = 0;
+    }
 
-    float freq = resonator.getEffectiveFrequency();
-    rc.freqValueLabel.setText(juce::String((int)freq) + " Hz", juce::dontSendNotification);
+    // --- Energy Accumulator ---
+    {
+        ModuleDescriptor desc;
+        desc.id = "energy";
+        desc.info = &ModuleDescriptions::getEnergyModule();
+        desc.knobs = {
+            { "energyDecay", "Decay",     " ms",  500.0, 5000.0, 10.0, 2000.0 },
+            { "injection",   "Injection", {},      0.1, 3.0, 0.01, 1.0 },
+            { "power",       "Power",     {},      0.5, 3.0, 0.01, 1.5 },
+            { "coupling",    "Coupling",  {},      0.0, 0.01, 0.0001, 0.001 },
+            { "bloom",       "Bloom",     {},      0.1, 1.0, 0.01, 0.7 },
+        };
+        desc.hasOutputMeter = true;
+        energyPanel.configure(desc);
+        addAndMakeVisible(energyPanel);
+    }
+
+    // --- Resonator Bank ---
+    {
+        ModuleDescriptor desc;
+        desc.id = "resonator";
+        desc.info = &ModuleDescriptions::getResonatorModule();
+        desc.knobs = {
+            { "resDecay",    "Decay",      " s",   0.5, 15.0, 0.1, 4.0 },
+            { "brightness",  "Brightness", {},      0.0, 1.0, 0.01, 0.7 },
+            { "spreadLevel", "Spread",     {},      0.0, 1.0, 0.01, 0.5 },
+            { "panWidth",    "Pan Width",  {},      0.0, 1.0, 0.01, 1.0 },
+        };
+        desc.hasInputMeter = true;
+        desc.hasOutputMeter = true;
+        resonatorPanel.configure(desc);
+        addAndMakeVisible(resonatorPanel);
+    }
+
+    // --- Combination Tones ---
+    {
+        ModuleDescriptor desc;
+        desc.id = "combo";
+        desc.info = &ModuleDescriptions::getCombinationModule();
+        desc.knobs = {
+            { "comboMix",       "Mix",       {},  0.0, 1.0, 0.01, 0.15 },
+            { "comboThreshold", "Threshold", {},  0.0, 1.0, 0.01, 0.3 },
+        };
+        comboTonePanel.configure(desc);
+        addAndMakeVisible(comboTonePanel);
+    }
+
+    // --- Crash Noise ---
+    {
+        ModuleDescriptor desc;
+        desc.id = "crash";
+        desc.info = &ModuleDescriptions::getCrashModule();
+        desc.knobs = {
+            { "crashThreshold", "Threshold", {},  0.1, 1.0, 0.01, 0.85 },
+            { "crashLevel",     "Level",     {},  0.0, 1.0, 0.01, 0.3 },
+        };
+        crashPanel.configure(desc);
+        addAndMakeVisible(crashPanel);
+    }
+
+    // --- Convolution Reverb ---
+    {
+        ModuleDescriptor desc;
+        desc.id = "convolution";
+        desc.info = &ModuleDescriptions::getConvolutionModule();
+        desc.knobs = {
+            { "convMix",     "Mix",      {},      0.0, 1.0, 0.01, 0.4 },
+            { "convGain",    "Gain",     " dB",   -24.0, 24.0, 0.1, 0.0 },
+            { "postLowEQ",   "Low EQ",   " dB",   -12.0, 12.0, 0.1, 0.0 },
+            { "postMidEQ",   "Mid EQ",   " dB",   -12.0, 12.0, 0.1, 0.0 },
+            { "postHighEQ",  "High EQ",  " dB",   -12.0, 12.0, 0.1, 0.0 },
+        };
+        desc.hasInputMeter = true;
+        desc.hasOutputMeter = true;
+        convolutionPanel.configure(desc);
+        addAndMakeVisible(convolutionPanel);
+    }
+
+    // --- Harmonic Exciter ---
+    {
+        ModuleDescriptor desc;
+        desc.id = "exciter";
+        desc.info = &ModuleDescriptions::getExciterModule();
+        desc.knobs = {
+            { "exciterFreq",  "HP Freq",  " Hz",   200.0, 2000.0, 1.0, 500.0 },
+            { "exciterDrive", "Drive",    {},       1.0, 5.0, 0.1, 2.0 },
+            { "exciterMix",   "Mix",      {},       0.0, 1.0, 0.01, 0.3 },
+        };
+        desc.hasInputMeter = true;
+        desc.hasOutputMeter = true;
+        exciterPanel.configure(desc);
+        addAndMakeVisible(exciterPanel);
+    }
+
+    // --- Multiband Compressor ---
+    {
+        ModuleDescriptor desc;
+        desc.id = "compressor";
+        desc.info = &ModuleDescriptions::getCompressorModule();
+        desc.knobs = {
+            { "compThresh",   "Threshold", " dB",  -40.0, 0.0, 0.1, -12.0 },
+            { "compRatio",    "Ratio",     {},      1.0, 20.0, 0.1, 4.0 },
+            { "compAttack",   "Attack",    " ms",   1.0, 100.0, 1.0, 10.0 },
+            { "compRelease",  "Release",   " ms",   10.0, 500.0, 1.0, 100.0 },
+        };
+        desc.hasInputMeter = true;
+        desc.hasOutputMeter = true;
+        compressorPanel.configure(desc);
+        addAndMakeVisible(compressorPanel);
+    }
+
+    // Output panel removed - output meter is in the bottom status bar
+}
+
+void MainComponent::buildParamBindings()
+{
+    auto& ea = gongSynth.getEnergyAccumulator();
+    auto& rb = gongSynth.getResonatorBank();
+    auto& combo = gongSynth.getCombinationToneBank();
+    auto& crash = gongSynth.getCrashNoiseGenerator();
+
+    // Helper to bind a knob's onValueChange
+    auto bind = [this](const juce::String& panelId, const juce::String& knobId,
+                       std::function<void(float)> setter,
+                       std::function<float()> getter,
+                       std::function<float()> effectiveGetter = nullptr) {
+        paramBindings[knobId] = { setter, getter, effectiveGetter };
+
+        // Find the right panel
+        ModulePanel* panel = nullptr;
+        if (panelId == "input") panel = &inputPanel;
+        else if (panelId == "energy") panel = &energyPanel;
+        else if (panelId == "resonator") panel = &resonatorPanel;
+        else if (panelId == "combo") panel = &comboTonePanel;
+        else if (panelId == "crash") panel = &crashPanel;
+        else if (panelId == "convolution") panel = &convolutionPanel;
+        else if (panelId == "exciter") panel = &exciterPanel;
+        else if (panelId == "compressor") panel = &compressorPanel;
+
+        if (panel != nullptr)
+        {
+            auto* slider = panel->getSlider(knobId);
+            if (slider != nullptr)
+            {
+                slider->onValueChange = [setter, slider] {
+                    setter(static_cast<float>(slider->getValue()));
+                };
+            }
+        }
+    };
+
+    // Input
+    bind("input", "inputGain",
+         [this](float v) { gongSynth.setInputGain(v); },
+         [this]() { return gongSynth.getInputGain(); });
+    bind("input", "threshold",
+         [this](float v) { gongSynth.setStrikeThreshold(v); },
+         [this]() { return gongSynth.getStrikeThreshold(); });
+    bind("input", "holdoff",
+         [this](float v) { gongSynth.setStrikeHoldoffMs(v); },
+         [this]() { return gongSynth.getStrikeHoldoffMs(); });
+
+    // Synthetic impulse shaping (these update auditionDescriptor for the audition button,
+    // and also affect MIDI-triggered strikes via the MidiControllerMock defaults)
+    bind("input", "strikeAttack",
+         [this](float v) { auditionDescriptor.attackSlope = static_cast<uint8_t>(v); },
+         [this]() { return static_cast<float>(auditionDescriptor.attackSlope); });
+    bind("input", "strikeBright",
+         [this](float v) { auditionDescriptor.spectralCentroid = static_cast<uint16_t>(v); },
+         [this]() { return static_cast<float>(auditionDescriptor.spectralCentroid); });
+    bind("input", "strikeHF",
+         [this](float v) { auditionDescriptor.hfEnergyRatio = static_cast<uint8_t>(v); },
+         [this]() { return static_cast<float>(auditionDescriptor.hfEnergyRatio); });
+    bind("input", "strikeDecay",
+         [this](float v) { auditionDescriptor.decayShape = static_cast<uint8_t>(v); },
+         [this]() { return static_cast<float>(auditionDescriptor.decayShape); });
+
+    // Energy
+    bind("energy", "energyDecay",
+         [&ea](float v) { ea.setGlobalDecayMs(v); },
+         [&ea]() { return ea.getGlobalDecayMs(); });
+    bind("energy", "injection",
+         [&ea](float v) { ea.setInjectionGain(v); },
+         [&ea]() { return ea.getInjectionGain(); });
+    bind("energy", "power",
+         [&ea](float v) { ea.setInjectionPower(v); },
+         [&ea]() { return ea.getInjectionPower(); });
+    bind("energy", "coupling",
+         [&ea](float v) { ea.setCouplingRate(v); },
+         [&ea]() { return ea.getCouplingRate(); });
+    bind("energy", "bloom",
+         [&ea](float v) { ea.setBloomThreshold(v); },
+         [&ea]() { return ea.getBloomThreshold(); });
+
+    // Resonator globals
+    bind("resonator", "resDecay",
+         [this](float v) { gongSynth.setGlobalDecayTime(v); },
+         [&rb]() { return rb.getResonator(0).getDecayTime(); });
+    bind("resonator", "brightness",
+         [this](float v) { gongSynth.setGlobalBrightness(v); },
+         [&rb]() { return rb.getResonator(0).getBaseBrightness(); });
+    bind("resonator", "spreadLevel",
+         [this](float v) { gongSynth.setGlobalSpreadLevel(v); },
+         [&rb]() { return rb.getResonator(0).getSpreadLevel(); });
+    bind("resonator", "panWidth",
+         [this](float v) { gongSynth.setGlobalSpreadPanWidth(v); },
+         [&rb]() { return rb.getResonator(0).getSpreadPanWidth(); });
+
+    // Combination tones
+    bind("combo", "comboMix",
+         [&combo](float v) { combo.setMixLevel(v); },
+         [&combo]() { return combo.getMixLevel(); });
+    bind("combo", "comboThreshold",
+         [&combo](float v) { combo.setActivationThreshold(v); },
+         [&combo]() { return combo.getActivationThreshold(); });
+
+    // Crash
+    bind("crash", "crashThreshold",
+         [&crash](float v) { crash.setThreshold(v); },
+         [&crash]() { return crash.getThreshold(); });
+    bind("crash", "crashLevel",
+         [&crash](float v) { crash.setMixLevel(v); },
+         [&crash]() { return crash.getMixLevel(); });
+
+    // Convolution
+    bind("convolution", "convMix",
+         [this](float v) { convolutionEngine.setWetDryMix(v); },
+         [this]() { return convolutionEngine.getWetDryMix(); });
+    bind("convolution", "convGain",
+         [this](float v) { convolutionEngine.setOutputGainDb(v); },
+         [this]() { return convolutionEngine.getOutputGainDb(); });
+    bind("convolution", "postLowEQ",
+         [this](float v) { convolutionEngine.setPostConvLowGainDb(v); },
+         [this]() { return convolutionEngine.getPostConvLowGainDb(); });
+    bind("convolution", "postMidEQ",
+         [this](float v) { convolutionEngine.setPostConvMidGainDb(v); },
+         [this]() { return convolutionEngine.getPostConvMidGainDb(); });
+    bind("convolution", "postHighEQ",
+         [this](float v) { convolutionEngine.setPostConvHighGainDb(v); },
+         [this]() { return convolutionEngine.getPostConvHighGainDb(); });
+
+    // Exciter
+    bind("exciter", "exciterFreq",
+         [this](float v) { exciterProcessor.setHighpassFrequency(v); },
+         [this]() { return exciterProcessor.getHighpassFrequency(); });
+    bind("exciter", "exciterDrive",
+         [this](float v) { exciterProcessor.setSaturationDrive(v); },
+         [this]() { return exciterProcessor.getSaturationDrive(); });
+    bind("exciter", "exciterMix",
+         [this](float v) { exciterProcessor.setDryWetMix(v); },
+         [this]() { return exciterProcessor.getDryWetMix(); });
+
+    // Compressor
+    bind("compressor", "compThresh",
+         [this](float v) { multibandCompressor.setAllThresholds(v); },
+         [this]() { return multibandCompressor.getBandSettings(0).threshold; });
+    bind("compressor", "compRatio",
+         [this](float v) { multibandCompressor.setAllRatios(v); },
+         [this]() { return multibandCompressor.getBandSettings(0).ratio; });
+    bind("compressor", "compAttack",
+         [this](float v) { multibandCompressor.setAllAttacks(v); },
+         [this]() { return multibandCompressor.getBandSettings(0).attackMs; });
+    bind("compressor", "compRelease",
+         [this](float v) { multibandCompressor.setAllReleases(v); },
+         [this]() { return multibandCompressor.getBandSettings(0).releaseMs; });
+
+    // Nonlinear: glide direction and sensitivity (bound to resonator knobs inline)
+    // These are handled via the modal template combo and directly in applyModulationOffsets
+}
+
+void MainComponent::buildPatchCables()
+{
+    patchCables.clearCables();
+
+    // Row 1: Input -> Energy -> Resonator -> Combo/Crash
+    patchCables.addCable(&inputPanel, &energyPanel);        // cable 0
+    patchCables.addCable(&energyPanel, &resonatorPanel);    // cable 1
+    patchCables.addCable(&resonatorPanel, &comboTonePanel); // cable 2
+    patchCables.addCable(&resonatorPanel, &crashPanel);     // cable 3
+
+    // Cross-row: Combo+Crash -> Convolution (row 1 to row 2)
+    patchCables.addCable(&comboTonePanel, &convolutionPanel); // cable 4
+    patchCables.addCable(&crashPanel, &convolutionPanel);     // cable 5
+
+    // Row 2: Convolution -> Exciter -> Compressor
+    patchCables.addCable(&convolutionPanel, &exciterPanel);   // cable 6
+    patchCables.addCable(&exciterPanel, &compressorPanel);    // cable 7
+}
+
+//==============================================================================
+// UI State
+//==============================================================================
+
+void MainComponent::updateUIFromState()
+{
+    // Update all knobs from processor state via bindings
+    for (auto& [id, binding] : paramBindings)
+    {
+        if (binding.getter)
+        {
+            float value = binding.getter();
+            // Find which panel has this knob
+            ModulePanel* panels[] = { &inputPanel, &energyPanel, &resonatorPanel, &comboTonePanel,
+                                       &crashPanel, &convolutionPanel, &exciterPanel, &compressorPanel };
+            for (auto* panel : panels)
+            {
+                auto* slider = panel->getSlider(id);
+                if (slider != nullptr)
+                {
+                    slider->setValue(value, juce::dontSendNotification);
+                    break;
+                }
+            }
+        }
+    }
+
+    // Resonator grid
+    resonatorGrid.updateFromState();
+
+    // Volume
+    volumeKnob.getSlider().setValue(masterGain, juce::dontSendNotification);
+
+    // Macros
+    for (int i = 0; i < 4; ++i)
+        macroKnobs[i].getSlider().setValue(macroParameters.getMacro(i), juce::dontSendNotification);
+
+    // IR labels
+    if (convolutionEngine.isLoaded())
+        convolutionContent.getIRFileLabel().setText(convolutionEngine.getIRFileName(), juce::dontSendNotification);
+
+    // Excitation mode
+    bool isAudio = gongSynth.getExcitationMode() == GongSynthesizer::ExcitationMode::AudioInput;
+    audioInputModeButton.setToggleState(isAudio, juce::dontSendNotification);
+    syntheticModeButton.setToggleState(!isAudio, juce::dontSendNotification);
 }
 
 void MainComponent::updatePresetComboBox()
@@ -485,7 +596,6 @@ void MainComponent::updatePresetComboBox()
     for (int i = 0; i < names.size(); ++i)
         presetComboBox.addItem(names[i], i + 1);
 
-    // Select current preset if any
     auto currentName = presetManager.getCurrentPresetName();
     if (currentName.isNotEmpty())
     {
@@ -495,108 +605,192 @@ void MainComponent::updatePresetComboBox()
     }
 }
 
-void MainComponent::updateUIFromState()
+void MainComponent::pushMeterData()
 {
-    // Update all UI controls from the current synth state
-    inputGainSlider.setValue(gongSynth.getInputGain(), juce::dontSendNotification);
-    strikeThreshSlider.setValue(gongSynth.getStrikeThreshold(), juce::dontSendNotification);
-    strikeHoldoffSlider.setValue(gongSynth.getStrikeHoldoffMs(), juce::dontSendNotification);
+    inputPanel.getInputMeter().setMeter(&diagnosticState.input);
+    inputPanel.getInputMeter().refresh();
 
+    energyPanel.getOutputMeter().setMeter(&diagnosticState.afterSynth);
+    energyPanel.getOutputMeter().refresh();
+
+    resonatorPanel.getInputMeter().setMeter(&diagnosticState.afterSynth);
+    resonatorPanel.getInputMeter().refresh();
+    resonatorPanel.getOutputMeter().setMeter(&diagnosticState.afterSynth);
+    resonatorPanel.getOutputMeter().refresh();
+
+    convolutionPanel.getInputMeter().setMeter(&diagnosticState.afterSynth);
+    convolutionPanel.getInputMeter().refresh();
+    convolutionPanel.getOutputMeter().setMeter(&diagnosticState.afterConv);
+    convolutionPanel.getOutputMeter().refresh();
+
+    exciterPanel.getInputMeter().setMeter(&diagnosticState.afterConv);
+    exciterPanel.getInputMeter().refresh();
+    exciterPanel.getOutputMeter().setMeter(&diagnosticState.afterExciter);
+    exciterPanel.getOutputMeter().refresh();
+
+    compressorPanel.getInputMeter().setMeter(&diagnosticState.afterExciter);
+    compressorPanel.getInputMeter().refresh();
+    compressorPanel.getOutputMeter().setMeter(&diagnosticState.afterComp);
+    compressorPanel.getOutputMeter().refresh();
+
+    outputMeter.refresh();
+}
+
+void MainComponent::pushEnergyData()
+{
     auto& ea = gongSynth.getEnergyAccumulator();
-    energyDecaySlider.setValue(ea.getGlobalDecayMs(), juce::dontSendNotification);
-    energyInjectionSlider.setValue(ea.getInjectionGain(), juce::dontSendNotification);
-    energyPowerSlider.setValue(ea.getInjectionPower(), juce::dontSendNotification);
+    energyRing.setGlobalEnergy(ea.getNormalizedGlobalEnergy());
+    for (int i = 0; i < 4; ++i)
+        energyRing.setBandEnergy(i, ea.getNormalizedBandEnergy(i));
 
-    auto& bank = gongSynth.getResonatorBank();
-    globalDecaySlider.setValue(bank.getResonator(0).getDecayTime(), juce::dontSendNotification);
-    globalBrightnessSlider.setValue(bank.getResonator(0).getBaseBrightness(), juce::dontSendNotification);
-    globalSpreadLevelSlider.setValue(bank.getResonator(0).getSpreadLevel(), juce::dontSendNotification);
-    globalSpreadPanWidthSlider.setValue(bank.getResonator(0).getSpreadPanWidth(), juce::dontSendNotification);
+    // Update patch cable signal levels
+    auto rmsFromMeter = [](const StageMeter& m) {
+        return (m.rmsL.load(std::memory_order_relaxed) + m.rmsR.load(std::memory_order_relaxed)) * 0.5f;
+    };
 
-    for (int i = 0; i < kNumResonators; ++i)
-    {
-        auto& rc = resonatorControls[i];
-        auto& res = bank.getResonator(i);
-
-        rc.enableButton.setToggleState(res.getEnabled(), juce::dontSendNotification);
-
-        bool isFree = res.getFrequencyMode() == SpreadVoiceResonator::FrequencyMode::Free;
-        rc.freeModeButton.setToggleState(isFree, juce::dontSendNotification);
-        rc.snapModeButton.setToggleState(!isFree, juce::dontSendNotification);
-        rc.freqSlider.setVisible(isFree);
-        rc.noteCombo.setVisible(!isFree);
-
-        rc.freqSlider.setValue(res.getFrequencyHz(), juce::dontSendNotification);
-        rc.noteCombo.setSelectedId(res.getMidiNote() + 1, juce::dontSendNotification);
-        rc.gainSlider.setValue(res.getGainDb(), juce::dontSendNotification);
-
-        rc.brightnessModSlider.setValue(res.getBrightnessEnergyAmount(), juce::dontSendNotification);
-        rc.spreadModSlider.setValue(res.getSpreadLevelEnergyAmount(), juce::dontSendNotification);
-        rc.detuneModSlider.setValue(res.getSpreadDetuneEnergyAmount(), juce::dontSendNotification);
-        rc.panModSlider.setValue(res.getPanWidthEnergyAmount(), juce::dontSendNotification);
-
-        updateResonatorFrequencyDisplay(i);
-    }
-
-    reverbMixSlider.setValue(convolutionEngine.getWetDryMix(), juce::dontSendNotification);
-    convGainSlider.setValue(convolutionEngine.getOutputGainDb(), juce::dontSendNotification);
-
-    exciterEnableButton.setToggleState(exciterProcessor.getEnabled(), juce::dontSendNotification);
-    exciterFreqSlider.setValue(exciterProcessor.getHighpassFrequency(), juce::dontSendNotification);
-    exciterDriveSlider.setValue(exciterProcessor.getSaturationDrive(), juce::dontSendNotification);
-    exciterMixSlider.setValue(exciterProcessor.getDryWetMix(), juce::dontSendNotification);
-
-    compEnableButton.setToggleState(multibandCompressor.getEnabled(), juce::dontSendNotification);
-    auto& bs = multibandCompressor.getBandSettings(0);
-    compThreshSlider.setValue(bs.threshold, juce::dontSendNotification);
-    compRatioSlider.setValue(bs.ratio, juce::dontSendNotification);
-    compAttackSlider.setValue(bs.attackMs, juce::dontSendNotification);
-    compReleaseSlider.setValue(bs.releaseMs, juce::dontSendNotification);
-
-    volumeSlider.setValue(masterGain, juce::dontSendNotification);
-
-    if (convolutionEngine.isLoaded())
-        irFileLabel.setText(convolutionEngine.getIRFileName(), juce::dontSendNotification);
+    float inputLevel = rmsFromMeter(diagnosticState.input) * 5.0f;
+    float synthLevel = rmsFromMeter(diagnosticState.afterSynth) * 5.0f;
+    float convLevel = rmsFromMeter(diagnosticState.afterConv) * 5.0f;
+    float exciterLevel = rmsFromMeter(diagnosticState.afterExciter) * 5.0f;
+    float compLevel = rmsFromMeter(diagnosticState.afterComp) * 5.0f;
+    patchCables.setSignalLevel(0, juce::jlimit(0.0f, 1.0f, inputLevel));   // input->energy
+    patchCables.setSignalLevel(1, juce::jlimit(0.0f, 1.0f, synthLevel));  // energy->resonator
+    patchCables.setSignalLevel(2, juce::jlimit(0.0f, 1.0f, synthLevel));  // resonator->combo
+    patchCables.setSignalLevel(3, juce::jlimit(0.0f, 1.0f, synthLevel));  // resonator->crash
+    patchCables.setSignalLevel(4, juce::jlimit(0.0f, 1.0f, synthLevel));  // combo->conv
+    patchCables.setSignalLevel(5, juce::jlimit(0.0f, 1.0f, synthLevel));  // crash->conv
+    patchCables.setSignalLevel(6, juce::jlimit(0.0f, 1.0f, convLevel));   // conv->exciter
+    patchCables.setSignalLevel(7, juce::jlimit(0.0f, 1.0f, exciterLevel));// exciter->comp
 }
 
-MainComponent::~MainComponent()
+void MainComponent::pushEffectiveValues()
 {
-    stopTimer();
+    auto& ea = gongSynth.getEnergyAccumulator();
+    float energy = ea.getNormalizedGlobalEnergy();
+    auto& res0 = gongSynth.getResonatorBank().getResonator(0);
 
-    diagnosticWindow.reset();
+    // Helper: show effective value on a knob (orange arc = energy/macro modulated value)
+    auto showEffective = [](ModulePanel& panel, const juce::String& id, float effectiveVal) {
+        if (auto* knob = panel.getKnob(id))
+            knob->setEffectiveValue(effectiveVal);
+    };
 
-    if (performanceServer)
-        performanceServer->stopServer();
+    // --- Energy modulation on resonator parameters ---
+    float baseBright = res0.getBaseBrightness();
+    float effBright = juce::jlimit(0.0f, 1.0f, baseBright + energy * res0.getBrightnessEnergyAmount());
+    showEffective(resonatorPanel, "brightness", effBright);
 
-    shutdownAudio();
+    float baseSpread = res0.getSpreadLevel();
+    float effSpread = juce::jlimit(0.0f, 1.0f, baseSpread + energy * res0.getSpreadLevelEnergyAmount());
+    showEffective(resonatorPanel, "spreadLevel", effSpread);
 
-    for (auto& device : midiDevices)
-        deviceManager.setMidiInputDeviceEnabled(device.identifier, false);
+    float basePan = res0.getSpreadPanWidth();
+    float effPan = juce::jlimit(0.0f, 1.0f, basePan + energy * res0.getPanWidthEnergyAmount());
+    showEffective(resonatorPanel, "panWidth", effPan);
+
+    // --- Macro influences (show where macros are pushing values) ---
+    if (macrosEnabled.load(std::memory_order_relaxed))
+    {
+        // Size macro -> decay time
+        float baseDecay = res0.getDecayTime();
+        float effDecay = baseDecay * macroParameters.getDecayTimeScale();
+        showEffective(resonatorPanel, "resDecay", juce::jlimit(0.5f, 15.0f, effDecay));
+
+        // Size macro -> coupling
+        float baseCoupling = ea.getCouplingRate();
+        showEffective(energyPanel, "coupling",
+                       juce::jlimit(0.0f, 0.01f, baseCoupling + macroParameters.getCouplingRateOffset()));
+
+        // Material macro -> brightness (combined with energy)
+        showEffective(resonatorPanel, "brightness",
+                       juce::jlimit(0.0f, 1.0f, effBright + macroParameters.getBrightnessOffset()));
+
+        // Intensity macro -> injection gain
+        float baseInj = ea.getInjectionGain();
+        showEffective(energyPanel, "injection",
+                       juce::jlimit(0.1f, 3.0f, baseInj + macroParameters.getInjectionGainOffset()));
+
+        // Intensity macro -> bloom threshold
+        float baseBloom = ea.getBloomThreshold();
+        showEffective(energyPanel, "bloom",
+                       juce::jlimit(0.1f, 1.0f, baseBloom + macroParameters.getBloomThresholdOffset()));
+
+        // Space macro -> conv mix
+        float baseConvMix = convolutionEngine.getWetDryMix();
+        showEffective(convolutionPanel, "convMix",
+                       juce::jlimit(0.0f, 1.0f, baseConvMix + macroParameters.getConvMixOffset()));
+
+        // Space macro -> pan width (combined with energy)
+        showEffective(resonatorPanel, "panWidth",
+                       juce::jlimit(0.0f, 1.0f, effPan + macroParameters.getSpreadWidthOffset()));
+    }
 }
+
+//==============================================================================
+// IR Loading
+//==============================================================================
+
+void MainComponent::loadIRFile()
+{
+    auto chooser = std::make_unique<juce::FileChooser>(
+        "Select Impulse Response",
+        irDirectory.exists() ? irDirectory : juce::File::getSpecialLocation(juce::File::userHomeDirectory),
+        "*.wav;*.aiff;*.aif;*.flac");
+    auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
+    chooser->launchAsync(flags, [this](const juce::FileChooser& fc) {
+        auto file = fc.getResult();
+        if (file.existsAsFile())
+        {
+            if (convolutionEngine.loadImpulseResponse(file))
+            {
+                convolutionContent.getIRFileLabel().setText(file.getFileName(), juce::dontSendNotification);
+                convolutionContent.getIRWaveform().setIR(convolutionEngine.getIRBuffer(), convolutionEngine.getIRSampleRate());
+            }
+        }
+    });
+    static std::unique_ptr<juce::FileChooser> currentChooser;
+    currentChooser = std::move(chooser);
+}
+
+void MainComponent::loadIRBFile()
+{
+    auto* chooser = new juce::FileChooser("Select IR B file...", irDirectory, "*.wav;*.aif;*.aiff;*.flac");
+    auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
+    chooser->launchAsync(flags, [this, chooser](const juce::FileChooser& fc) {
+        auto file = fc.getResult();
+        if (file.existsAsFile())
+        {
+            convolutionEngine.loadImpulseResponseB(file);
+            convolutionContent.getIRBFileLabel().setText(file.getFileName(), juce::dontSendNotification);
+        }
+        delete chooser;
+    });
+}
+
+//==============================================================================
+// MIDI
+//==============================================================================
 
 void MainComponent::updateMidiDeviceList()
 {
     midiDevices = juce::MidiInput::getAvailableDevices();
     midiInputList.clear();
-
     juce::StringArray midiInputNames;
     for (auto& device : midiDevices)
         midiInputNames.add(device.name);
-
     midiInputList.addItemList(midiInputNames, 1);
 }
 
 void MainComponent::setMidiInput(int index)
 {
-    if (index < 0 || index >= midiDevices.size())
-        return;
+    if (index < 0 || index >= midiDevices.size()) return;
 
     if (lastMidiInputIndex >= 0 && lastMidiInputIndex < midiDevices.size())
     {
-        auto previousDevice = midiDevices[lastMidiInputIndex];
-        if (!deviceManager.isMidiInputDeviceEnabled(previousDevice.identifier))
-            deviceManager.setMidiInputDeviceEnabled(previousDevice.identifier, false);
-        deviceManager.removeMidiInputDeviceCallback(previousDevice.identifier, this);
+        auto prev = midiDevices[lastMidiInputIndex];
+        if (!deviceManager.isMidiInputDeviceEnabled(prev.identifier))
+            deviceManager.setMidiInputDeviceEnabled(prev.identifier, false);
+        deviceManager.removeMidiInputDeviceCallback(prev.identifier, this);
     }
 
     auto newDevice = midiDevices[index];
@@ -615,325 +809,16 @@ void MainComponent::handleIncomingMidiMessage(juce::MidiInput*, const juce::Midi
         lastPlayedNote = message.getNoteNumber();
 }
 
-void MainComponent::sliderValueChanged(juce::Slider* slider)
-{
-    // Input controls
-    if (slider == &inputGainSlider)
-        gongSynth.setInputGain(static_cast<float>(inputGainSlider.getValue()));
-    else if (slider == &strikeThreshSlider)
-        gongSynth.setStrikeThreshold(static_cast<float>(strikeThreshSlider.getValue()));
-    else if (slider == &strikeHoldoffSlider)
-        gongSynth.setStrikeHoldoffMs(static_cast<float>(strikeHoldoffSlider.getValue()));
-    // Energy controls
-    else if (slider == &energyDecaySlider)
-        gongSynth.getEnergyAccumulator().setGlobalDecayMs(static_cast<float>(energyDecaySlider.getValue()));
-    else if (slider == &energyInjectionSlider)
-        gongSynth.getEnergyAccumulator().setInjectionGain(static_cast<float>(energyInjectionSlider.getValue()));
-    else if (slider == &energyPowerSlider)
-        gongSynth.getEnergyAccumulator().setInjectionPower(static_cast<float>(energyPowerSlider.getValue()));
-    // Global resonator controls
-    else if (slider == &globalDecaySlider)
-        gongSynth.setGlobalDecayTime(static_cast<float>(globalDecaySlider.getValue()));
-    else if (slider == &globalBrightnessSlider)
-        gongSynth.setGlobalBrightness(static_cast<float>(globalBrightnessSlider.getValue()));
-    else if (slider == &globalSpreadLevelSlider)
-        gongSynth.setGlobalSpreadLevel(static_cast<float>(globalSpreadLevelSlider.getValue()));
-    else if (slider == &globalSpreadPanWidthSlider)
-        gongSynth.setGlobalSpreadPanWidth(static_cast<float>(globalSpreadPanWidthSlider.getValue()));
-    // Convolution
-    else if (slider == &reverbMixSlider)
-        convolutionEngine.setWetDryMix(static_cast<float>(reverbMixSlider.getValue()));
-    else if (slider == &convGainSlider)
-        convolutionEngine.setOutputGainDb(static_cast<float>(convGainSlider.getValue()));
-    // Exciter
-    else if (slider == &exciterFreqSlider)
-        exciterProcessor.setHighpassFrequency(static_cast<float>(exciterFreqSlider.getValue()));
-    else if (slider == &exciterDriveSlider)
-        exciterProcessor.setSaturationDrive(static_cast<float>(exciterDriveSlider.getValue()));
-    else if (slider == &exciterMixSlider)
-        exciterProcessor.setDryWetMix(static_cast<float>(exciterMixSlider.getValue()));
-    // Compressor
-    else if (slider == &compThreshSlider)
-        multibandCompressor.setAllThresholds(static_cast<float>(compThreshSlider.getValue()));
-    else if (slider == &compRatioSlider)
-        multibandCompressor.setAllRatios(static_cast<float>(compRatioSlider.getValue()));
-    else if (slider == &compAttackSlider)
-        multibandCompressor.setAllAttacks(static_cast<float>(compAttackSlider.getValue()));
-    else if (slider == &compReleaseSlider)
-        multibandCompressor.setAllReleases(static_cast<float>(compReleaseSlider.getValue()));
-    // Nonlinear dynamics
-    else if (slider == &couplingRateSlider)
-        gongSynth.getEnergyAccumulator().setCouplingRate(static_cast<float>(couplingRateSlider.getValue()));
-    else if (slider == &bloomThreshSlider)
-        gongSynth.getEnergyAccumulator().setBloomThreshold(static_cast<float>(bloomThreshSlider.getValue()));
-    else if (slider == &glideDirectionSlider)
-        gongSynth.getResonatorBank().setAllPitchGlideDirection(static_cast<float>(glideDirectionSlider.getValue()));
-    else if (slider == &glideSensitivitySlider)
-        gongSynth.getResonatorBank().setAllPitchGlideSensitivity(static_cast<float>(glideSensitivitySlider.getValue()));
-    else if (slider == &postConvLowSlider)
-        convolutionEngine.setPostConvLowGainDb(static_cast<float>(postConvLowSlider.getValue()));
-    else if (slider == &postConvMidSlider)
-        convolutionEngine.setPostConvMidGainDb(static_cast<float>(postConvMidSlider.getValue()));
-    else if (slider == &postConvHighSlider)
-        convolutionEngine.setPostConvHighGainDb(static_cast<float>(postConvHighSlider.getValue()));
-    // Macro knobs
-    else if (slider == &macroSliders[0])
-        macroParameters.setMacro(0, static_cast<float>(macroSliders[0].getValue()));
-    else if (slider == &macroSliders[1])
-        macroParameters.setMacro(1, static_cast<float>(macroSliders[1].getValue()));
-    else if (slider == &macroSliders[2])
-        macroParameters.setMacro(2, static_cast<float>(macroSliders[2].getValue()));
-    else if (slider == &macroSliders[3])
-        macroParameters.setMacro(3, static_cast<float>(macroSliders[3].getValue()));
-    // Volume
-    else if (slider == &volumeSlider)
-        masterGain = static_cast<float>(volumeSlider.getValue());
-    else
-    {
-        // Per-resonator sliders
-        for (int i = 0; i < kNumResonators; ++i)
-        {
-            auto& rc = resonatorControls[i];
-            auto& resonator = gongSynth.getResonatorBank().getResonator(i);
-
-            if (slider == &rc.freqSlider)
-            {
-                resonator.setFrequencyHz(static_cast<float>(rc.freqSlider.getValue()));
-                updateResonatorFrequencyDisplay(i);
-                return;
-            }
-            else if (slider == &rc.gainSlider)
-            {
-                resonator.setGainDb(static_cast<float>(rc.gainSlider.getValue()));
-                return;
-            }
-            else if (slider == &rc.brightnessModSlider)
-            {
-                resonator.setBrightnessEnergyAmount(static_cast<float>(rc.brightnessModSlider.getValue()));
-                return;
-            }
-            else if (slider == &rc.spreadModSlider)
-            {
-                resonator.setSpreadLevelEnergyAmount(static_cast<float>(rc.spreadModSlider.getValue()));
-                return;
-            }
-            else if (slider == &rc.detuneModSlider)
-            {
-                resonator.setSpreadDetuneEnergyAmount(static_cast<float>(rc.detuneModSlider.getValue()));
-                return;
-            }
-            else if (slider == &rc.panModSlider)
-            {
-                resonator.setPanWidthEnergyAmount(static_cast<float>(rc.panModSlider.getValue()));
-                return;
-            }
-        }
-    }
-}
-
-void MainComponent::buttonClicked(juce::Button* button)
-{
-    if (button == &panicButton)
-        gongSynth.panic();
-    else if (button == &loadIRButton)
-        loadIRFile();
-    else if (button == &exciterEnableButton)
-        exciterProcessor.setEnabled(exciterEnableButton.getToggleState());
-    else if (button == &compEnableButton)
-        multibandCompressor.setEnabled(compEnableButton.getToggleState());
-    else if (button == &audioInputModeButton)
-    {
-        gongSynth.setExcitationMode(GongSynthesizer::ExcitationMode::AudioInput);
-    }
-    else if (button == &syntheticModeButton)
-    {
-        gongSynth.setExcitationMode(GongSynthesizer::ExcitationMode::SyntheticImpulse);
-    }
-    else if (button == &convSectionToggle)
-    {
-        bool on = convSectionToggle.getToggleState();
-        diagnosticState.convState.store(on ? 0 : 2, std::memory_order_relaxed);
-    }
-    else if (button == &nlSectionToggle)
-    {
-        nlDynamicsEnabled.store(nlSectionToggle.getToggleState(), std::memory_order_relaxed);
-    }
-    else if (button == &macroSectionToggle)
-    {
-        macrosEnabled.store(macroSectionToggle.getToggleState(), std::memory_order_relaxed);
-    }
-    else if (button == &loadIRBButton)
-    {
-        auto* chooser = new juce::FileChooser("Select IR B file...", irDirectory, "*.wav;*.aif;*.aiff;*.flac");
-        auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
-        chooser->launchAsync(flags, [this, chooser](const juce::FileChooser& fc) {
-            auto file = fc.getResult();
-            if (file.existsAsFile())
-            {
-                convolutionEngine.loadImpulseResponseB(file);
-                irBFileLabel.setText(file.getFileName(), juce::dontSendNotification);
-            }
-            delete chooser;
-        });
-    }
-    else if (button == &diagnosticsButton)
-    {
-        if (!diagnosticWindow || !diagnosticWindow->isVisible())
-            diagnosticWindow = std::make_unique<DiagnosticWindow>(diagnosticState);
-        else
-            diagnosticWindow->setVisible(true);
-    }
-    else if (button == &presetSaveButton)
-    {
-        auto name = presetManager.getCurrentPresetName();
-        if (name.isEmpty())
-            name = "Untitled";
-        presetManager.savePreset(name, gongSynth, convolutionEngine, exciterProcessor, multibandCompressor, masterGain, &diagnosticState);
-        updatePresetComboBox();
-    }
-    else if (button == &presetSaveAsButton)
-    {
-        auto callback = [this](const juce::String& name) {
-            if (name.isNotEmpty())
-            {
-                presetManager.savePreset(name, gongSynth, convolutionEngine, exciterProcessor, multibandCompressor, masterGain, &diagnosticState);
-                updatePresetComboBox();
-            }
-        };
-
-        auto* alertWindow = new juce::AlertWindow("Save Preset As", "Enter preset name:", juce::MessageBoxIconType::QuestionIcon);
-        alertWindow->addTextEditor("name", presetManager.getCurrentPresetName(), "Name:");
-        alertWindow->addButton("Save", 1);
-        alertWindow->addButton("Cancel", 0);
-
-        alertWindow->enterModalState(true, juce::ModalCallbackFunction::create([alertWindow, callback](int result) {
-            if (result == 1)
-            {
-                auto name = alertWindow->getTextEditorContents("name");
-                callback(name);
-            }
-            delete alertWindow;
-        }));
-    }
-    else
-    {
-        for (int i = 0; i < kNumResonators; ++i)
-        {
-            auto& rc = resonatorControls[i];
-            auto& resonator = gongSynth.getResonatorBank().getResonator(i);
-
-            if (button == &rc.enableButton)
-            {
-                resonator.setEnabled(rc.enableButton.getToggleState());
-                return;
-            }
-            else if (button == &rc.freeModeButton)
-            {
-                resonator.setFrequencyMode(SpreadVoiceResonator::FrequencyMode::Free);
-                rc.freqSlider.setVisible(true);
-                rc.noteCombo.setVisible(false);
-                updateResonatorFrequencyDisplay(i);
-                return;
-            }
-            else if (button == &rc.snapModeButton)
-            {
-                resonator.setFrequencyMode(SpreadVoiceResonator::FrequencyMode::Snap);
-                rc.freqSlider.setVisible(false);
-                rc.noteCombo.setVisible(true);
-                int note = rc.noteCombo.getSelectedId() - 1;
-                resonator.setMidiNote(note);
-                updateResonatorFrequencyDisplay(i);
-                return;
-            }
-        }
-    }
-}
-
-void MainComponent::comboBoxChanged(juce::ComboBox* comboBox)
-{
-    if (comboBox == &midiInputList)
-    {
-        setMidiInput(midiInputList.getSelectedItemIndex());
-    }
-    else if (comboBox == &modalTemplateCombo)
-    {
-        int id = modalTemplateCombo.getSelectedId();
-        if (id == 1)
-        {
-            // Manual mode - no template
-        }
-        else
-        {
-            int templateIdx = id - 2;
-            float fundamental = gongSynth.getResonatorBank().getResonator(0).getEffectiveFrequency();
-            gongSynth.getResonatorBank().applyModalTemplate(templateIdx, fundamental);
-            updateUIFromState();
-        }
-    }
-    else if (comboBox == &presetComboBox)
-    {
-        auto selectedName = presetComboBox.getText();
-        if (selectedName.isNotEmpty())
-        {
-            if (presetManager.loadPreset(selectedName, gongSynth, convolutionEngine,
-                                          exciterProcessor, multibandCompressor, masterGain, &diagnosticState))
-            {
-                updateUIFromState();
-                if (convolutionEngine.isLoaded())
-                    irWaveform.setIR(convolutionEngine.getIRBuffer(), convolutionEngine.getIRSampleRate());
-            }
-        }
-    }
-    else
-    {
-        for (int i = 0; i < kNumResonators; ++i)
-        {
-            auto& rc = resonatorControls[i];
-            if (comboBox == &rc.noteCombo)
-            {
-                int note = rc.noteCombo.getSelectedId() - 1;
-                gongSynth.getResonatorBank().getResonator(i).setMidiNote(note);
-                updateResonatorFrequencyDisplay(i);
-                return;
-            }
-        }
-    }
-}
-
-void MainComponent::loadIRFile()
-{
-    auto fileChooser = std::make_unique<juce::FileChooser>(
-        "Select Impulse Response",
-        irDirectory.exists() ? irDirectory : juce::File::getSpecialLocation(juce::File::userHomeDirectory),
-        "*.wav;*.aiff;*.aif;*.flac"
-    );
-
-    auto chooserFlags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
-
-    fileChooser->launchAsync(chooserFlags, [this](const juce::FileChooser& fc)
-    {
-        auto file = fc.getResult();
-        if (file.existsAsFile())
-        {
-            if (convolutionEngine.loadImpulseResponse(file))
-            {
-                irFileLabel.setText(file.getFileName(), juce::dontSendNotification);
-                irWaveform.setIR(convolutionEngine.getIRBuffer(), convolutionEngine.getIRSampleRate());
-            }
-            else
-            {
-                irFileLabel.setText("Load failed", juce::dontSendNotification);
-            }
-        }
-    });
-
-    static std::unique_ptr<juce::FileChooser> currentChooser;
-    currentChooser = std::move(fileChooser);
-}
+//==============================================================================
+// Timer
+//==============================================================================
 
 void MainComponent::timerCallback()
 {
-    currentGlobalEnergy = gongSynth.getEnergyAccumulator().getNormalizedGlobalEnergy();
+    pushMeterData();
+    pushEnergyData();
+    pushEffectiveValues();
+    resonatorGrid.refresh();
 
     if (diagnosticWindow)
         diagnosticWindow->refresh();
@@ -941,34 +826,20 @@ void MainComponent::timerCallback()
     repaint();
 }
 
+//==============================================================================
+// Audio Processing (unchanged logic)
+//==============================================================================
+
 void MainComponent::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
 {
     currentSampleRate = sampleRate;
     currentBlockSize = samplesPerBlockExpected;
 
     midiCollector.reset(sampleRate);
-
     gongSynth.prepareToPlay(sampleRate, samplesPerBlockExpected);
     convolutionEngine.prepare(sampleRate, samplesPerBlockExpected);
     exciterProcessor.prepare(sampleRate, samplesPerBlockExpected);
     multibandCompressor.prepare(sampleRate, samplesPerBlockExpected);
-
-    // Apply initial settings
-    gongSynth.setGlobalDecayTime(static_cast<float>(globalDecaySlider.getValue()));
-    gongSynth.setGlobalBrightness(static_cast<float>(globalBrightnessSlider.getValue()));
-    gongSynth.setGlobalSpreadLevel(static_cast<float>(globalSpreadLevelSlider.getValue()));
-    gongSynth.setGlobalSpreadPanWidth(static_cast<float>(globalSpreadPanWidthSlider.getValue()));
-
-    convolutionEngine.setWetDryMix(static_cast<float>(reverbMixSlider.getValue()));
-
-    exciterProcessor.setHighpassFrequency(static_cast<float>(exciterFreqSlider.getValue()));
-    exciterProcessor.setSaturationDrive(static_cast<float>(exciterDriveSlider.getValue()));
-    exciterProcessor.setDryWetMix(static_cast<float>(exciterMixSlider.getValue()));
-
-    multibandCompressor.setAllThresholds(static_cast<float>(compThreshSlider.getValue()));
-    multibandCompressor.setAllRatios(static_cast<float>(compRatioSlider.getValue()));
-    multibandCompressor.setAllAttacks(static_cast<float>(compAttackSlider.getValue()));
-    multibandCompressor.setAllReleases(static_cast<float>(compReleaseSlider.getValue()));
 
     synthBuffer.setSize(2, samplesPerBlockExpected);
     audioInputBuffer.setSize(2, samplesPerBlockExpected);
@@ -978,17 +849,11 @@ void MainComponent::prepareToPlay(int samplesPerBlockExpected, double sampleRate
     modulationBus.prepare(sampleRate);
     diagnosticState.budgetUs.store(static_cast<float>(1000000.0 * samplesPerBlockExpected / sampleRate),
                                     std::memory_order_relaxed);
-
-    double budgetMs = 1000.0 * samplesPerBlockExpected / sampleRate;
-    juce::Logger::writeToLog("AUDIO SETUP: sampleRate=" + juce::String(sampleRate)
-        + " blockSize=" + juce::String(samplesPerBlockExpected)
-        + " budget=" + juce::String(budgetMs, 2) + "ms");
 }
 
 void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
 {
     auto* device = deviceManager.getCurrentAudioDevice();
-
     if (device == nullptr)
     {
         bufferToFill.clearActiveBufferRegion();
@@ -1003,8 +868,7 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
 
     auto activeInputChannels = device->getActiveInputChannels();
     int numInputChannels = activeInputChannels.countNumberOfSetBits();
-    if (numInputChannels == 0)
-        numInputChannels = 1;
+    if (numInputChannels == 0) numInputChannels = 1;
 
     if (synthBuffer.getNumChannels() != numOutputChannels || synthBuffer.getNumSamples() < numSamples)
         synthBuffer.setSize(numOutputChannels, numSamples, false, false, true);
@@ -1021,8 +885,6 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
     else
         audioInputBuffer.copyFrom(1, 0, inputChannelData[1] + bufferToFill.startSample, numSamples);
 
-    currentInputLevel = audioInputBuffer.getMagnitude(0, numSamples);
-
     // 1. Meter input
     diagnosticState.input.update(audioInputBuffer, 0, numSamples);
 
@@ -1030,7 +892,7 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
     modulationBus.computeBlock(diagnosticState, numSamples);
     applyModulationOffsets();
 
-    // 3. Test signal injection helper
+    // 3. Test signal
     int testType = diagnosticState.testSignalType.load(std::memory_order_relaxed);
     int testPoint = diagnosticState.testInjectionPoint.load(std::memory_order_relaxed);
     float testGain = diagnosticState.testSignalGain.load(std::memory_order_relaxed);
@@ -1046,90 +908,61 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
         }
     };
 
-    // Inject at input point
     injectTestSignal(audioInputBuffer, 0);
 
     // Bypass/Solo/Mute logic
     bool anySoloed = diagnosticState.isAnySoloed();
-    int synthEff = diagnosticState.getEffectiveState(
-        diagnosticState.synthState.load(std::memory_order_relaxed), anySoloed);
-    int convEff = diagnosticState.getEffectiveState(
-        diagnosticState.convState.load(std::memory_order_relaxed), anySoloed);
-    int exciterEff = diagnosticState.getEffectiveState(
-        diagnosticState.exciterState.load(std::memory_order_relaxed), anySoloed);
-    int compEff = diagnosticState.getEffectiveState(
-        diagnosticState.compState.load(std::memory_order_relaxed), anySoloed);
+    int synthEff = diagnosticState.getEffectiveState(diagnosticState.synthState.load(std::memory_order_relaxed), anySoloed);
+    int convEff = diagnosticState.getEffectiveState(diagnosticState.convState.load(std::memory_order_relaxed), anySoloed);
+    int exciterEff = diagnosticState.getEffectiveState(diagnosticState.exciterState.load(std::memory_order_relaxed), anySoloed);
+    int compEff = diagnosticState.getEffectiveState(diagnosticState.compState.load(std::memory_order_relaxed), anySoloed);
 
     synthBuffer.clear();
 
     // 4. Synth
     auto t0 = std::chrono::steady_clock::now();
-
-    if (synthEff != 2) // not bypassed
-        gongSynth.process(synthBuffer, audioInputBuffer, midiBuffer, numSamples);
-    if (synthEff == 1) // muted
-        synthBuffer.clear(0, numSamples);
-
+    if (synthEff != 2) gongSynth.process(synthBuffer, audioInputBuffer, midiBuffer, numSamples);
+    if (synthEff == 1) synthBuffer.clear(0, numSamples);
     auto t1 = std::chrono::steady_clock::now();
-    auto synthUs = static_cast<float>(std::chrono::duration<double, std::micro>(t1 - t0).count());
-    diagnosticState.synthTime.record(synthUs);
+    diagnosticState.synthTime.record(static_cast<float>(std::chrono::duration<double, std::micro>(t1 - t0).count()));
     diagnosticState.afterSynth.update(synthBuffer, 0, numSamples);
 
-    // Copy synth output to main buffer
-    for (int channel = 0; channel < static_cast<int>(numOutputChannels); ++channel)
-        bufferToFill.buffer->copyFrom(channel, bufferToFill.startSample, synthBuffer, channel, 0, numSamples);
+    // Copy synth to output
+    for (int ch = 0; ch < static_cast<int>(numOutputChannels); ++ch)
+        bufferToFill.buffer->copyFrom(ch, bufferToFill.startSample, synthBuffer, ch, 0, numSamples);
 
     juce::AudioBuffer<float> processBuffer(bufferToFill.buffer->getArrayOfWritePointers(),
                                            static_cast<int>(numOutputChannels),
-                                           bufferToFill.startSample,
-                                           numSamples);
+                                           bufferToFill.startSample, numSamples);
 
-    // Inject after synth
     injectTestSignal(processBuffer, 1);
 
     // 5. Convolution
-    auto t2start = std::chrono::steady_clock::now();
-
-    if (convEff != 2)
-        convolutionEngine.process(processBuffer);
-    if (convEff == 1)
-        processBuffer.clear(0, numSamples);
-
+    auto t2s = std::chrono::steady_clock::now();
+    if (convEff != 2) convolutionEngine.process(processBuffer);
+    if (convEff == 1) processBuffer.clear(0, numSamples);
     auto t2 = std::chrono::steady_clock::now();
-    auto convUs = static_cast<float>(std::chrono::duration<double, std::micro>(t2 - t2start).count());
-    diagnosticState.convTime.record(convUs);
+    diagnosticState.convTime.record(static_cast<float>(std::chrono::duration<double, std::micro>(t2 - t2s).count()));
     diagnosticState.afterConv.update(processBuffer, 0, numSamples);
 
-    // Inject after conv
     injectTestSignal(processBuffer, 2);
 
     // 6. Exciter
-    auto t3start = std::chrono::steady_clock::now();
-
-    if (exciterEff != 2)
-        exciterProcessor.process(processBuffer);
-    if (exciterEff == 1)
-        processBuffer.clear(0, numSamples);
-
+    auto t3s = std::chrono::steady_clock::now();
+    if (exciterEff != 2) exciterProcessor.process(processBuffer);
+    if (exciterEff == 1) processBuffer.clear(0, numSamples);
     auto t3 = std::chrono::steady_clock::now();
-    auto exciterUs = static_cast<float>(std::chrono::duration<double, std::micro>(t3 - t3start).count());
-    diagnosticState.exciterTime.record(exciterUs);
+    diagnosticState.exciterTime.record(static_cast<float>(std::chrono::duration<double, std::micro>(t3 - t3s).count()));
     diagnosticState.afterExciter.update(processBuffer, 0, numSamples);
 
-    // Inject after exciter
     injectTestSignal(processBuffer, 3);
 
     // 7. Compressor
-    auto t4start = std::chrono::steady_clock::now();
-
-    if (compEff != 2)
-        multibandCompressor.process(processBuffer);
-    if (compEff == 1)
-        processBuffer.clear(0, numSamples);
-
+    auto t4s = std::chrono::steady_clock::now();
+    if (compEff != 2) multibandCompressor.process(processBuffer);
+    if (compEff == 1) processBuffer.clear(0, numSamples);
     auto t4 = std::chrono::steady_clock::now();
-    auto compUs = static_cast<float>(std::chrono::duration<double, std::micro>(t4 - t4start).count());
-    diagnosticState.compTime.record(compUs);
+    diagnosticState.compTime.record(static_cast<float>(std::chrono::duration<double, std::micro>(t4 - t4s).count()));
     diagnosticState.afterComp.update(processBuffer, 0, numSamples);
 
     // 8. Master gain
@@ -1139,8 +972,9 @@ void MainComponent::getNextAudioBlock(const juce::AudioSourceChannelInfo& buffer
     diagnosticState.output.update(*bufferToFill.buffer, bufferToFill.startSample, numSamples);
 
     // 10. Total timing
-    auto totalUs = static_cast<float>(std::chrono::duration<double, std::micro>(t4 - t0).count());
-    diagnosticState.totalTimeUs.store(totalUs, std::memory_order_relaxed);
+    diagnosticState.totalTimeUs.store(
+        static_cast<float>(std::chrono::duration<double, std::micro>(t4 - t0).count()),
+        std::memory_order_relaxed);
 
     // 11. Energy values
     auto& ea = gongSynth.getEnergyAccumulator();
@@ -1160,94 +994,106 @@ void MainComponent::applyModulationOffsets()
         return juce::jlimit(specs[idx].minVal, specs[idx].maxVal, base + offset);
     };
 
+    // Read base values from knobs via bindings
+    auto getKnobVal = [](ModulePanel& panel, const juce::String& id) -> float {
+        auto* slider = panel.getSlider(id);
+        return slider ? static_cast<float>(slider->getValue()) : 0.0f;
+    };
+
     // Convolution
-    float convMixBase = static_cast<float>(reverbMixSlider.getValue());
-    float convGainBase = static_cast<float>(convGainSlider.getValue());
-    convolutionEngine.setWetDryMix(clamp(ModTarget::ConvMix, convMixBase));
-    convolutionEngine.setOutputGainDb(clamp(ModTarget::ConvGain, convGainBase));
+    convolutionEngine.setWetDryMix(clamp(ModTarget::ConvMix, getKnobVal(convolutionPanel, "convMix")));
+    convolutionEngine.setOutputGainDb(clamp(ModTarget::ConvGain, getKnobVal(convolutionPanel, "convGain")));
 
     // Exciter
-    float excFreqBase = static_cast<float>(exciterFreqSlider.getValue());
-    float excDriveBase = static_cast<float>(exciterDriveSlider.getValue());
-    float excMixBase = static_cast<float>(exciterMixSlider.getValue());
-    exciterProcessor.setHighpassFrequency(clamp(ModTarget::ExciterFreq, excFreqBase));
-    exciterProcessor.setSaturationDrive(clamp(ModTarget::ExciterDrive, excDriveBase));
-    exciterProcessor.setDryWetMix(clamp(ModTarget::ExciterMix, excMixBase));
+    exciterProcessor.setHighpassFrequency(clamp(ModTarget::ExciterFreq, getKnobVal(exciterPanel, "exciterFreq")));
+    exciterProcessor.setSaturationDrive(clamp(ModTarget::ExciterDrive, getKnobVal(exciterPanel, "exciterDrive")));
+    exciterProcessor.setDryWetMix(clamp(ModTarget::ExciterMix, getKnobVal(exciterPanel, "exciterMix")));
     exciterProcessor.setOutputGainDb(clamp(ModTarget::ExciterOutputGain, exciterProcessor.getOutputGainDb()));
 
     // Compressor
-    float compThreshBase = static_cast<float>(compThreshSlider.getValue());
-    float compRatioBase = static_cast<float>(compRatioSlider.getValue());
-    float compAttackBase = static_cast<float>(compAttackSlider.getValue());
-    float compReleaseBase = static_cast<float>(compReleaseSlider.getValue());
-    multibandCompressor.setAllThresholds(clamp(ModTarget::CompThreshold, compThreshBase));
-    multibandCompressor.setAllRatios(clamp(ModTarget::CompRatio, compRatioBase));
-    multibandCompressor.setAllAttacks(clamp(ModTarget::CompAttack, compAttackBase));
-    multibandCompressor.setAllReleases(clamp(ModTarget::CompRelease, compReleaseBase));
+    multibandCompressor.setAllThresholds(clamp(ModTarget::CompThreshold, getKnobVal(compressorPanel, "compThresh")));
+    multibandCompressor.setAllRatios(clamp(ModTarget::CompRatio, getKnobVal(compressorPanel, "compRatio")));
+    multibandCompressor.setAllAttacks(clamp(ModTarget::CompAttack, getKnobVal(compressorPanel, "compAttack")));
+    multibandCompressor.setAllReleases(clamp(ModTarget::CompRelease, getKnobVal(compressorPanel, "compRelease")));
 
     // Synth
-    float decayBase = static_cast<float>(globalDecaySlider.getValue());
-    float brightBase = static_cast<float>(globalBrightnessSlider.getValue());
-    float spreadBase = static_cast<float>(globalSpreadLevelSlider.getValue());
-    float panBase = static_cast<float>(globalSpreadPanWidthSlider.getValue());
-    gongSynth.setGlobalDecayTime(clamp(ModTarget::SynthDecay, decayBase));
-    gongSynth.setGlobalBrightness(clamp(ModTarget::SynthBrightness, brightBase));
-    gongSynth.setGlobalSpreadLevel(clamp(ModTarget::SynthSpreadLevel, spreadBase));
-    gongSynth.setGlobalSpreadPanWidth(clamp(ModTarget::SynthSpreadPanWidth, panBase));
+    gongSynth.setGlobalDecayTime(clamp(ModTarget::SynthDecay, getKnobVal(resonatorPanel, "resDecay")));
+    gongSynth.setGlobalBrightness(clamp(ModTarget::SynthBrightness, getKnobVal(resonatorPanel, "brightness")));
+    gongSynth.setGlobalSpreadLevel(clamp(ModTarget::SynthSpreadLevel, getKnobVal(resonatorPanel, "spreadLevel")));
+    gongSynth.setGlobalSpreadPanWidth(clamp(ModTarget::SynthSpreadPanWidth, getKnobVal(resonatorPanel, "panWidth")));
 
     // Energy
-    float eDecayBase = static_cast<float>(energyDecaySlider.getValue());
-    float eInjBase = static_cast<float>(energyInjectionSlider.getValue());
-    float ePowBase = static_cast<float>(energyPowerSlider.getValue());
     auto& ea = gongSynth.getEnergyAccumulator();
-    ea.setGlobalDecayMs(clamp(ModTarget::EnergyDecayMs, eDecayBase));
-    ea.setInjectionGain(clamp(ModTarget::EnergyInjectionGain, eInjBase));
-    ea.setInjectionPower(clamp(ModTarget::EnergyInjectionPower, ePowBase));
+    ea.setGlobalDecayMs(clamp(ModTarget::EnergyDecayMs, getKnobVal(energyPanel, "energyDecay")));
+    ea.setInjectionGain(clamp(ModTarget::EnergyInjectionGain, getKnobVal(energyPanel, "injection")));
+    ea.setInjectionPower(clamp(ModTarget::EnergyInjectionPower, getKnobVal(energyPanel, "power")));
 
-    // Roll prime level (Step 4)
-    float rollBase = ea.getRollPrimeLevel();
-    ea.setRollPrimeLevel(clamp(ModTarget::RollPrimeLevel, rollBase));
+    // Roll prime
+    ea.setRollPrimeLevel(clamp(ModTarget::RollPrimeLevel, ea.getRollPrimeLevel()));
 
-    // Nonlinear dynamics (only when enabled)
+    // Nonlinear dynamics
     if (nlDynamicsEnabled.load(std::memory_order_relaxed))
     {
-        // Pitch glide (Step 6) - modulation offsets
-        float glideDir = static_cast<float>(glideDirectionSlider.getValue()) + get(ModTarget::PitchGlideDirection);
-        float glideSens = static_cast<float>(glideSensitivitySlider.getValue()) + get(ModTarget::PitchGlideSensitivity);
-        gongSynth.getResonatorBank().setAllPitchGlideDirection(juce::jlimit(-1.0f, 1.0f, glideDir));
-        gongSynth.getResonatorBank().setAllPitchGlideSensitivity(juce::jlimit(0.0f, 200.0f, glideSens));
+        float glideDir = get(ModTarget::PitchGlideDirection);
+        float glideSens = get(ModTarget::PitchGlideSensitivity);
+        gongSynth.getResonatorBank().setAllPitchGlideDirection(juce::jlimit(-1.0f, 1.0f, 1.0f + glideDir));
+        gongSynth.getResonatorBank().setAllPitchGlideSensitivity(juce::jlimit(0.0f, 200.0f, 80.0f + glideSens));
     }
     else
     {
-        // Bypass: zero out nonlinear effects
         gongSynth.getResonatorBank().setAllPitchGlideSensitivity(0.0f);
         ea.setCouplingRate(0.0f);
         ea.setBloomThreshold(1.0f);
     }
 
-    // Post-conv EQ (Step 8) - modulation offsets
-    float postLow = static_cast<float>(postConvLowSlider.getValue()) + get(ModTarget::PostConvLowGain);
-    float postMid = static_cast<float>(postConvMidSlider.getValue()) + get(ModTarget::PostConvMidGain);
-    float postHigh = static_cast<float>(postConvHighSlider.getValue()) + get(ModTarget::PostConvHighGain);
-    convolutionEngine.setPostConvLowGainDb(juce::jlimit(-12.0f, 12.0f, postLow));
-    convolutionEngine.setPostConvMidGainDb(juce::jlimit(-12.0f, 12.0f, postMid));
-    convolutionEngine.setPostConvHighGainDb(juce::jlimit(-12.0f, 12.0f, postHigh));
+    // Post-conv EQ
+    convolutionEngine.setPostConvLowGainDb(juce::jlimit(-12.0f, 12.0f,
+        getKnobVal(convolutionPanel, "postLowEQ") + get(ModTarget::PostConvLowGain)));
+    convolutionEngine.setPostConvMidGainDb(juce::jlimit(-12.0f, 12.0f,
+        getKnobVal(convolutionPanel, "postMidEQ") + get(ModTarget::PostConvMidGain)));
+    convolutionEngine.setPostConvHighGainDb(juce::jlimit(-12.0f, 12.0f,
+        getKnobVal(convolutionPanel, "postHighEQ") + get(ModTarget::PostConvHighGain)));
 
-    // Step 14: IR crossfade driven by energy
-    float globalEnergy = ea.getNormalizedGlobalEnergy();
-    convolutionEngine.setIRCrossfadeEnergy(globalEnergy);
+    // IR crossfade
+    convolutionEngine.setIRCrossfadeEnergy(ea.getNormalizedGlobalEnergy());
 
-    // Step 15: Apply macro offsets (only when enabled)
+    // Macros - apply ALL macro offsets to their target parameters
     if (macrosEnabled.load(std::memory_order_relaxed))
     {
+        // Macro 1: Size -> decay time scale, coupling rate, fundamental scale
+        float decayScale = macroParameters.getDecayTimeScale();
+        float baseDecay = getKnobVal(resonatorPanel, "resDecay");
+        gongSynth.setGlobalDecayTime(juce::jlimit(0.5f, 15.0f, baseDecay * decayScale));
+
+        float baseCoupling = getKnobVal(energyPanel, "coupling");
+        ea.setCouplingRate(juce::jlimit(0.0f, 0.01f, baseCoupling + macroParameters.getCouplingRateOffset()));
+
+        // Macro 2: Material -> brightness, glide direction
+        float baseBright = getKnobVal(resonatorPanel, "brightness");
+        gongSynth.setGlobalBrightness(juce::jlimit(0.0f, 1.0f, baseBright + macroParameters.getBrightnessOffset()));
+
+        if (nlDynamicsEnabled.load(std::memory_order_relaxed))
+        {
+            gongSynth.getResonatorBank().setAllPitchGlideDirection(
+                juce::jlimit(-1.0f, 1.0f, 1.0f + get(ModTarget::PitchGlideDirection) + macroParameters.getGlideDirectionOffset()));
+        }
+
+        // Macro 3: Intensity -> injection gain, bloom threshold, crash threshold
         ea.setInjectionGain(juce::jlimit(0.1f, 5.0f, ea.getInjectionGain() + macroParameters.getInjectionGainOffset()));
         ea.setBloomThreshold(juce::jlimit(0.1f, 1.0f, ea.getBloomThreshold() + macroParameters.getBloomThresholdOffset()));
         gongSynth.getCrashNoiseGenerator().setThreshold(
             juce::jlimit(0.1f, 1.0f, gongSynth.getCrashNoiseGenerator().getThreshold() + macroParameters.getCrashThresholdOffset()));
+
+        // Macro 4: Space -> conv mix, spread width
+        float baseConvMix = getKnobVal(convolutionPanel, "convMix");
+        convolutionEngine.setWetDryMix(juce::jlimit(0.0f, 1.0f, baseConvMix + macroParameters.getConvMixOffset()));
+
+        float baseSpreadW = getKnobVal(resonatorPanel, "panWidth");
+        gongSynth.setGlobalSpreadPanWidth(juce::jlimit(0.0f, 1.0f, baseSpreadW + macroParameters.getSpreadWidthOffset()));
     }
 
     // Master gain
-    float mgBase = static_cast<float>(volumeSlider.getValue());
+    float mgBase = static_cast<float>(volumeKnob.getSlider().getValue());
     masterGain = clamp(ModTarget::MasterGain, mgBase);
 }
 
@@ -1259,7 +1105,9 @@ void MainComponent::releaseResources()
     gongSynth.releaseResources();
 }
 
-// === PerformanceServer::Listener Implementation ===
+//==============================================================================
+// PerformanceServer::Listener
+//==============================================================================
 
 juce::StringArray MainComponent::getPresetNames()
 {
@@ -1274,7 +1122,7 @@ bool MainComponent::activatePreset(const juce::String& name)
         updateUIFromState();
         updatePresetComboBox();
         if (convolutionEngine.isLoaded())
-            irWaveform.setIR(convolutionEngine.getIRBuffer(), convolutionEngine.getIRSampleRate());
+            convolutionContent.getIRWaveform().setIR(convolutionEngine.getIRBuffer(), convolutionEngine.getIRSampleRate());
         return true;
     }
     return false;
@@ -1295,17 +1143,14 @@ juce::StringArray MainComponent::getIRNames()
 
 bool MainComponent::activateIR(const juce::String& name)
 {
-    if (!irDirectory.exists())
-        return false;
-
+    if (!irDirectory.exists()) return false;
     auto irFile = irDirectory.getChildFile(name);
-    if (!irFile.existsAsFile())
-        return false;
+    if (!irFile.existsAsFile()) return false;
 
     if (convolutionEngine.loadImpulseResponse(irFile))
     {
-        irFileLabel.setText(irFile.getFileName(), juce::dontSendNotification);
-        irWaveform.setIR(convolutionEngine.getIRBuffer(), convolutionEngine.getIRSampleRate());
+        convolutionContent.getIRFileLabel().setText(irFile.getFileName(), juce::dontSendNotification);
+        convolutionContent.getIRWaveform().setIR(convolutionEngine.getIRBuffer(), convolutionEngine.getIRSampleRate());
         return true;
     }
     return false;
@@ -1321,398 +1166,166 @@ juce::String MainComponent::getCurrentIRName()
     return convolutionEngine.isLoaded() ? convolutionEngine.getIRFileName() : juce::String();
 }
 
-// === Paint & Layout ===
+//==============================================================================
+// Paint & Layout
+//==============================================================================
 
 void MainComponent::paint(juce::Graphics& g)
 {
-    g.fillAll(juce::Colour(0xff1e1e1e));
+    g.fillAll(juce::Colour(GongLookAndFeel::kBgDark));
 
     // Title
-    g.setFont(juce::FontOptions(20.0f).withStyle("Bold"));
-    g.setColour(juce::Colours::white);
-    g.drawText("GONG ENERGY SYNTHESIZER", getLocalBounds().removeFromTop(35), juce::Justification::centred);
+    g.setFont(juce::FontOptions(15.0f).withStyle("Bold"));
+    g.setColour(juce::Colours::white.withAlpha(0.7f));
+    g.drawText("GONG ENERGY SYNTHESIZER", getLocalBounds().removeFromTop(38), juce::Justification::centred);
 
-    // Section definitions: bounds, title, description, enabled
-    struct SectionDraw {
-        juce::Rectangle<int> bounds;
-        const char* title;
-        const char* description;
-        bool enabled;
-    };
-
-    SectionDraw sections[] = {
-        { inputSectionBounds,     "INPUT / STRIKE DETECTION",
-          "Mic/line input -> strike detection -> energy injection. Controls how audio triggers the energy system.", true },
-        { energySectionBounds,    "ENERGY ACCUMULATOR",
-          "Leaky integrator: strikes inject energy that decays over time and modulates resonator behavior.", true },
-        { resonatorSectionBounds, "RESONATOR BANK (4 x 7 voices)",
-          "4 modal resonators with 7 spread voices each. Energy modulates brightness, spread, detuning, and stereo width.", true },
-        { convSectionBounds,      "CONVOLUTION REVERB",
-          "IR-based reverb with dual-IR energy crossfade and post-convolution 3-band EQ for tonal shaping.",
-          convSectionToggle.getToggleState() },
-        { nlSectionBounds,        "NONLINEAR DYNAMICS",
-          "Inter-band energy coupling, power-law bloom cascade, pitch glide under stress -- nonlinear gong physics.",
-          nlSectionToggle.getToggleState() },
-        { outputSectionBounds,    "OUTPUT PROCESSING",
-          "Harmonic exciter (HP filter + saturation) and 3-band multiband compressor for final shaping.", true },
-        { macroSectionBounds,     "MACRO CONTROLS",
-          "4 high-level knobs (Size, Material, Intensity, Space) controlling multiple parameters simultaneously.",
-          macroSectionToggle.getToggleState() },
-        { presetSectionBounds,    "PRESETS", "", true },
-    };
-
-    for (auto& s : sections)
-    {
-        if (s.bounds.isEmpty()) continue;
-
-        float alpha = s.enabled ? 1.0f : 0.4f;
-
-        // Background
-        g.setColour(juce::Colour(0xff2a2a2a));
-        g.fillRoundedRectangle(s.bounds.toFloat(), 5.0f);
-        g.setColour(s.enabled ? juce::Colour(0xff444444) : juce::Colour(0xff333333));
-        g.drawRoundedRectangle(s.bounds.toFloat().reduced(0.5f), 5.0f, 1.0f);
-
-        // Title
-        auto titleRect = s.bounds.withHeight(22).reduced(8, 2);
-        g.setColour(juce::Colours::white.withAlpha(0.9f * alpha));
-        g.setFont(juce::FontOptions(13.0f).withStyle("Bold"));
-        g.drawText(s.title, titleRect, juce::Justification::centredLeft);
-
-        // Description
-        if (s.description[0] != '\0')
-        {
-            auto descRect = s.bounds.reduced(8, 0);
-            descRect.removeFromTop(20);
-            g.setColour(juce::Colours::white.withAlpha(0.35f * alpha));
-            g.setFont(juce::FontOptions(10.0f));
-            g.drawText(s.description, descRect.removeFromTop(14), juce::Justification::centredLeft);
-        }
-    }
-
-    // Energy meter (top-right of energy section)
-    if (!energySectionBounds.isEmpty())
-    {
-        auto meterRect = juce::Rectangle<int>(energySectionBounds.getRight() - 130,
-                                               energySectionBounds.getY() + 4, 110, 14);
-        g.setColour(juce::Colours::black);
-        g.fillRect(meterRect);
-        g.setColour(juce::Colour(0xffff8800));
-        g.fillRect(meterRect.withWidth(static_cast<int>(currentGlobalEnergy * meterRect.getWidth())));
-        g.setColour(juce::Colours::grey);
-        g.drawRect(meterRect);
-    }
-
-    // Status lines at bottom
-    auto statusArea = getLocalBounds().removeFromBottom(42);
+    // Status bar at bottom
+    auto statusArea = getLocalBounds().removeFromBottom(20);
     g.setFont(juce::FontOptions(10.0f));
+    g.setColour(juce::Colours::white.withAlpha(0.4f));
 
-    auto debugLine = statusArea.removeFromTop(18);
-    juce::String debugText = "LEVELS - In: " + juce::String(diagnosticState.input.rmsL.load(std::memory_order_relaxed), 3)
-        + " | Synth: " + juce::String(diagnosticState.afterSynth.rmsL.load(std::memory_order_relaxed), 3)
-        + " | Conv: " + juce::String(diagnosticState.afterConv.rmsL.load(std::memory_order_relaxed), 3)
-        + " | Exc: " + juce::String(diagnosticState.afterExciter.rmsL.load(std::memory_order_relaxed), 3)
-        + " | Comp: " + juce::String(diagnosticState.afterComp.rmsL.load(std::memory_order_relaxed), 3)
-        + " | Out: " + juce::String(diagnosticState.output.rmsL.load(std::memory_order_relaxed), 3);
-    g.setColour(juce::Colours::yellow);
-    g.drawText(debugText, debugLine, juce::Justification::centred, true);
-
-    g.setColour(juce::Colours::lightgrey);
-    juce::String statusText = "Energy: " + juce::String(static_cast<int>(currentGlobalEnergy * 100)) + "%"
-        + "  |  IR: " + (convolutionEngine.isLoaded() ? convolutionEngine.getIRFileName() : juce::String("None"))
+    auto& ea = gongSynth.getEnergyAccumulator();
+    juce::String statusText = "Energy: " + juce::String(static_cast<int>(ea.getNormalizedGlobalEnergy() * 100)) + "%"
+        + "  |  IR: " + (convolutionEngine.isLoaded() ? convolutionEngine.getIRFileName() : "None")
         + "  |  Mode: " + (gongSynth.getExcitationMode() == GongSynthesizer::ExcitationMode::AudioInput ? "Audio" : "Synthetic")
         + "  |  Preset: " + (presetManager.getCurrentPresetName().isEmpty() ? "None" : presetManager.getCurrentPresetName());
-
-    g.drawText(statusText, statusArea, juce::Justification::centred, true);
+    g.drawText(statusText, statusArea, juce::Justification::centred);
 }
 
 void MainComponent::resized()
 {
-    auto area = getLocalBounds().reduced(10);
-    area.removeFromTop(35); // Title
+    auto area = getLocalBounds();
 
-    // MIDI row + excitation mode
-    auto midiRow = area.removeFromTop(28);
-    midiInputListLabel.setBounds(midiRow.removeFromLeft(40));
-    midiInputList.setBounds(midiRow.removeFromLeft(200));
-    midiRow.removeFromLeft(30);
-    audioInputModeButton.setBounds(midiRow.removeFromLeft(90));
-    syntheticModeButton.setBounds(midiRow.removeFromLeft(90));
+    // === Title area (top 20px) - just painted text, no components ===
+    area.removeFromTop(20);
 
-    area.removeFromTop(6);
+    // === Toolbar (36px tall, with generous spacing) ===
+    auto toolbar = area.removeFromTop(36);
+    // Center the toolbar items with margins
+    int toolbarContentW = 900; // approximate total width of toolbar items
+    int toolbarMargin = (toolbar.getWidth() - toolbarContentW) / 2;
+    toolbar = toolbar.reduced(juce::jmax(20, toolbarMargin), 4);
 
-    // Helper: title(20) + description(14) + gap(4) = 38px reserved at top of each section
-    constexpr int sectionHeaderH = 38;
+    midiInputListLabel.setBounds(toolbar.removeFromLeft(35));
+    midiInputList.setBounds(toolbar.removeFromLeft(130));
+    toolbar.removeFromLeft(16);
 
-    // === INPUT SECTION === (38 header + 28 controls = 66 + padding)
-    inputSectionBounds = area.removeFromTop(70);
-    {
-        auto s = inputSectionBounds.reduced(8, 0);
-        s.removeFromTop(sectionHeaderH);
-        auto row = s.removeFromTop(28);
+    audioInputModeButton.setBounds(toolbar.removeFromLeft(60));
+    toolbar.removeFromLeft(4);
+    syntheticModeButton.setBounds(toolbar.removeFromLeft(60));
+    toolbar.removeFromLeft(4);
+    auditionButton.setBounds(toolbar.removeFromLeft(55));
+    toolbar.removeFromLeft(20);
 
-        inputGainLabel.setBounds(row.removeFromLeft(65));
-        inputGainSlider.setBounds(row.removeFromLeft(120));
-        row.removeFromLeft(15);
-        strikeThreshLabel.setBounds(row.removeFromLeft(80));
-        strikeThreshSlider.setBounds(row.removeFromLeft(120));
-        row.removeFromLeft(15);
-        strikeHoldoffLabel.setBounds(row.removeFromLeft(55));
-        strikeHoldoffSlider.setBounds(row.removeFromLeft(120));
-    }
+    presetLabel.setBounds(toolbar.removeFromLeft(40));
+    presetComboBox.setBounds(toolbar.removeFromLeft(120));
+    toolbar.removeFromLeft(6);
+    presetSaveButton.setBounds(toolbar.removeFromLeft(36));
+    toolbar.removeFromLeft(6);
+    presetSaveAsButton.setBounds(toolbar.removeFromLeft(55));
+    toolbar.removeFromLeft(20);
 
-    area.removeFromTop(6);
+    volumeKnob.setBounds(toolbar.removeFromLeft(55).withHeight(28));
+    toolbar.removeFromLeft(12);
+    panicButton.setBounds(toolbar.removeFromLeft(48));
+    toolbar.removeFromLeft(8);
+    diagnosticsButton.setBounds(toolbar.removeFromLeft(36));
 
-    // === ENERGY SECTION ===
-    energySectionBounds = area.removeFromTop(70);
-    {
-        auto s = energySectionBounds.reduced(8, 0);
-        s.removeFromTop(sectionHeaderH);
-        auto row = s.removeFromTop(28);
+    area.removeFromTop(6); // breathing room below toolbar
 
-        energyDecayLabel.setBounds(row.removeFromLeft(45));
-        energyDecaySlider.setBounds(row.removeFromLeft(120));
-        row.removeFromLeft(15);
-        energyInjectionLabel.setBounds(row.removeFromLeft(60));
-        energyInjectionSlider.setBounds(row.removeFromLeft(100));
-        row.removeFromLeft(15);
-        energyPowerLabel.setBounds(row.removeFromLeft(45));
-        energyPowerSlider.setBounds(row.removeFromLeft(100));
-    }
+    // === Status bar (bottom 20px) ===
+    area.removeFromBottom(20);
 
-    area.removeFromTop(6);
+    // === Main content area with generous margins ===
+    int sideMargin = 24;  // breathing room on left and right
+    auto content = area.reduced(sideMargin, 4);
 
-    // === RESONATOR SECTION ===
-    resonatorSectionBounds = area.removeFromTop(310);
-    {
-        auto s = resonatorSectionBounds.reduced(8, 0);
-        s.removeFromTop(sectionHeaderH);
+    // Right sidebar for macros
+    int macroSidebarW = 82;
+    int macroGap = 16; // gap between modules and macros
+    auto macroArea = content.removeFromRight(macroSidebarW);
+    content.removeFromRight(macroGap);
 
-        auto globalRow = s.removeFromTop(26);
-        globalDecayLabel.setBounds(globalRow.removeFromLeft(45));
-        globalDecaySlider.setBounds(globalRow.removeFromLeft(100));
-        globalRow.removeFromLeft(15);
-        globalBrightnessLabel.setBounds(globalRow.removeFromLeft(65));
-        globalBrightnessSlider.setBounds(globalRow.removeFromLeft(100));
-        globalRow.removeFromLeft(15);
-        globalSpreadLevelLabel.setBounds(globalRow.removeFromLeft(65));
-        globalSpreadLevelSlider.setBounds(globalRow.removeFromLeft(100));
-        globalRow.removeFromLeft(15);
-        globalSpreadPanWidthLabel.setBounds(globalRow.removeFromLeft(65));
-        globalSpreadPanWidthSlider.setBounds(globalRow.removeFromLeft(100));
+    int macroKnobH = macroArea.getHeight() / 4;
+    for (int i = 0; i < 4; ++i)
+        macroKnobs[i].setBounds(macroArea.removeFromTop(macroKnobH));
 
-        s.removeFromTop(6);
+    // === Two-row module layout ===
+    // Row 1 (58%): Input -> Energy -> Resonator -> Combo+Crash
+    // Row 2 (42%): Convolution -> Exciter -> Compressor
+    // Row 2 left edge aligns with row 1 left edge
+    // Row 2 right edge aligns with row 1 right edge (combo/crash)
 
-        auto headerRow = s.removeFromTop(18);
-        int col1 = 25, col2 = 25, col3 = 75, col4 = 130, col5 = 55, col6 = 55, col7 = 55, col8 = 55, col9 = 55;
-        int colGap = 8;
+    int rowGap = 44;  // generous gap for cross-row cable routing
+    int colGap = 20;  // spacing between modules in same row
 
-        resHeaderOn.setBounds(headerRow.removeFromLeft(col1 + col2));
-        headerRow.removeFromLeft(colGap);
-        resHeaderMode.setBounds(headerRow.removeFromLeft(col3));
-        headerRow.removeFromLeft(colGap);
-        resHeaderFreq.setBounds(headerRow.removeFromLeft(col4));
-        headerRow.removeFromLeft(colGap);
-        resHeaderGain.setBounds(headerRow.removeFromLeft(col5));
-        headerRow.removeFromLeft(colGap);
-        resHeaderBright.setBounds(headerRow.removeFromLeft(col6));
-        headerRow.removeFromLeft(colGap);
-        resHeaderSpread.setBounds(headerRow.removeFromLeft(col7));
-        headerRow.removeFromLeft(colGap);
-        resHeaderDetune.setBounds(headerRow.removeFromLeft(col8));
-        headerRow.removeFromLeft(colGap);
-        resHeaderPan.setBounds(headerRow.removeFromLeft(col9));
+    int totalH = content.getHeight();
+    int row1H = (totalH - rowGap) * 58 / 100;
+    int row2H = totalH - row1H - rowGap;
 
-        s.removeFromTop(4);
+    auto row1 = content.removeFromTop(row1H);
+    content.removeFromTop(rowGap);
+    auto row2 = content.withHeight(row2H);
 
-        for (int i = 0; i < kNumResonators; ++i)
-        {
-            auto& rc = resonatorControls[i];
-            auto resRow = s.removeFromTop(50);
+    // === Row 1: Input | Energy | Resonator | Combo+Crash ===
+    int inputW = 250;
+    int energyW = 220;
+    int comboCrashW = 155;
+    int availForRes = row1.getWidth() - inputW - energyW - comboCrashW - 3 * colGap;
+    int resonatorW = juce::jmin(availForRes, 390);
 
-            rc.nameLabel.setBounds(resRow.removeFromLeft(col1));
-            rc.enableButton.setBounds(resRow.removeFromLeft(col2).reduced(2));
-            resRow.removeFromLeft(colGap);
+    // Distribute extra space as padding between modules (not centering)
+    int row1UsedW = inputW + energyW + resonatorW + comboCrashW + 3 * colGap;
+    int row1Extra = row1.getWidth() - row1UsedW;
+    int extraPerGap = row1Extra / 4; // spread across 3 gaps + margins
 
-            auto modeArea = resRow.removeFromLeft(col3);
-            rc.freeModeButton.setBounds(modeArea.removeFromTop(24));
-            rc.snapModeButton.setBounds(modeArea.removeFromTop(24));
-            resRow.removeFromLeft(colGap);
+    row1.removeFromLeft(extraPerGap / 2);
 
-            auto freqArea = resRow.removeFromLeft(col4);
-            auto freqControlArea = freqArea.removeFromTop(28);
-            rc.freqSlider.setBounds(freqControlArea);
-            rc.noteCombo.setBounds(freqControlArea);
-            rc.freqValueLabel.setBounds(freqArea.removeFromTop(18));
-            resRow.removeFromLeft(colGap);
+    inputPanel.setBounds(row1.removeFromLeft(inputW));
+    row1.removeFromLeft(colGap + extraPerGap);
+    energyPanel.setBounds(row1.removeFromLeft(energyW));
+    row1.removeFromLeft(colGap + extraPerGap);
+    resonatorPanel.setBounds(row1.removeFromLeft(resonatorW));
+    row1.removeFromLeft(colGap + extraPerGap);
 
-            rc.gainSlider.setBounds(resRow.removeFromLeft(col5).withHeight(22));
-            resRow.removeFromLeft(colGap);
-            rc.brightnessModSlider.setBounds(resRow.removeFromLeft(col6).withHeight(22));
-            resRow.removeFromLeft(colGap);
-            rc.spreadModSlider.setBounds(resRow.removeFromLeft(col7).withHeight(22));
-            resRow.removeFromLeft(colGap);
-            rc.detuneModSlider.setBounds(resRow.removeFromLeft(col8).withHeight(22));
-            resRow.removeFromLeft(colGap);
-            rc.panModSlider.setBounds(resRow.removeFromLeft(col9).withHeight(22));
-        }
-    }
+    auto comboCrashArea = row1.withWidth(comboCrashW);
+    int comboH = comboCrashArea.getHeight() / 2 - 2;
+    comboTonePanel.setBounds(comboCrashArea.removeFromTop(comboH));
+    comboCrashArea.removeFromTop(4);
+    crashPanel.setBounds(comboCrashArea);
 
-    area.removeFromTop(6);
+    // Record row 1 extents for aligning row 2
+    int row1Left = inputPanel.getX();
+    int row1Right = comboTonePanel.getRight();
 
-    // === CONVOLUTION SECTION === (includes post-conv EQ and IR B)
-    convSectionBounds = area.removeFromTop(170);
-    {
-        auto s = convSectionBounds.reduced(8, 0);
-        // Toggle in title bar
-        convSectionToggle.setBounds(convSectionBounds.getRight() - 50, convSectionBounds.getY() + 2, 40, 18);
+    // === Row 2: Convolution | Exciter | Compressor ===
+    // Aligned: left edge = row1Left, right edge = row1Right
+    int row2TotalW = row1Right - row1Left;
+    int convW = row2TotalW * 40 / 100;  // ~40% for convolution (wider)
+    int exciterW = row2TotalW * 28 / 100;
+    int compW = row2TotalW - convW - exciterW - 2 * colGap;
 
-        s.removeFromTop(sectionHeaderH);
+    auto row2Aligned = row2.withX(row1Left).withWidth(row2TotalW);
 
-        irWaveform.setBounds(s.removeFromTop(52).reduced(0, 2));
-        s.removeFromTop(2);
+    convolutionPanel.setBounds(row2Aligned.removeFromLeft(convW));
+    row2Aligned.removeFromLeft(colGap);
+    exciterPanel.setBounds(row2Aligned.removeFromLeft(exciterW));
+    row2Aligned.removeFromLeft(colGap);
+    compressorPanel.setBounds(row2Aligned);
 
-        auto controlRow = s.removeFromTop(28);
-        loadIRButton.setBounds(controlRow.removeFromLeft(80));
-        controlRow.removeFromLeft(10);
-        irFileLabel.setBounds(controlRow.removeFromLeft(160));
-        controlRow.removeFromLeft(15);
-        reverbMixLabel.setBounds(controlRow.removeFromLeft(30));
-        reverbMixSlider.setBounds(controlRow.removeFromLeft(100));
-        controlRow.removeFromLeft(15);
-        convGainLabel.setBounds(controlRow.removeFromLeft(35));
-        convGainSlider.setBounds(controlRow.removeFromLeft(100));
+    // Modal template in resonator area
+    auto resBounds = resonatorPanel.getBounds();
+    modalTemplateLabel.setBounds(resBounds.getX() + 4, resBounds.getBottom() - 22, 55, 18);
+    modalTemplateCombo.setBounds(resBounds.getX() + 58, resBounds.getBottom() - 22, 110, 18);
 
-        s.removeFromTop(4);
+    // Output meter in bottom status bar
+    auto statusArea = getLocalBounds().removeFromBottom(20);
+    outputMeter.setBounds(statusArea.removeFromRight(120).reduced(2, 2));
 
-        auto eqRow = s.removeFromTop(28);
-        postConvLowLabel.setBounds(eqRow.removeFromLeft(45));
-        postConvLowSlider.setBounds(eqRow.removeFromLeft(80));
-        eqRow.removeFromLeft(8);
-        postConvMidLabel.setBounds(eqRow.removeFromLeft(45));
-        postConvMidSlider.setBounds(eqRow.removeFromLeft(80));
-        eqRow.removeFromLeft(8);
-        postConvHighLabel.setBounds(eqRow.removeFromLeft(50));
-        postConvHighSlider.setBounds(eqRow.removeFromLeft(80));
-        eqRow.removeFromLeft(15);
-        loadIRBButton.setBounds(eqRow.removeFromLeft(80));
-        eqRow.removeFromLeft(5);
-        irBFileLabel.setBounds(eqRow.removeFromLeft(120));
-    }
-
-    area.removeFromTop(6);
-
-    // === NONLINEAR DYNAMICS SECTION ===
-    nlSectionBounds = area.removeFromTop(105);
-    {
-        auto s = nlSectionBounds.reduced(8, 0);
-        // Toggle in title bar
-        nlSectionToggle.setBounds(nlSectionBounds.getRight() - 50, nlSectionBounds.getY() + 2, 40, 18);
-
-        s.removeFromTop(sectionHeaderH);
-
-        auto row1 = s.removeFromTop(28);
-        couplingRateLabel.setBounds(row1.removeFromLeft(55));
-        couplingRateSlider.setBounds(row1.removeFromLeft(100));
-        row1.removeFromLeft(15);
-        bloomThreshLabel.setBounds(row1.removeFromLeft(45));
-        bloomThreshSlider.setBounds(row1.removeFromLeft(100));
-        row1.removeFromLeft(15);
-        glideDirectionLabel.setBounds(row1.removeFromLeft(60));
-        glideDirectionSlider.setBounds(row1.removeFromLeft(100));
-        row1.removeFromLeft(15);
-        glideSensitivityLabel.setBounds(row1.removeFromLeft(65));
-        glideSensitivitySlider.setBounds(row1.removeFromLeft(100));
-
-        s.removeFromTop(4);
-
-        auto row2 = s.removeFromTop(28);
-        modalTemplateLabel.setBounds(row2.removeFromLeft(60));
-        modalTemplateCombo.setBounds(row2.removeFromLeft(150));
-    }
-
-    area.removeFromTop(6);
-
-    // === OUTPUT PROCESSING SECTION ===
-    outputSectionBounds = area.removeFromTop(105);
-    {
-        auto s = outputSectionBounds.reduced(8, 0);
-        s.removeFromTop(sectionHeaderH);
-
-        auto exciterRow = s.removeFromTop(28);
-        exciterEnableButton.setBounds(exciterRow.removeFromLeft(70));
-        exciterRow.removeFromLeft(15);
-        exciterFreqLabel.setBounds(exciterRow.removeFromLeft(50));
-        exciterFreqSlider.setBounds(exciterRow.removeFromLeft(100));
-        exciterRow.removeFromLeft(15);
-        exciterDriveLabel.setBounds(exciterRow.removeFromLeft(40));
-        exciterDriveSlider.setBounds(exciterRow.removeFromLeft(80));
-        exciterRow.removeFromLeft(15);
-        exciterMixLabel.setBounds(exciterRow.removeFromLeft(30));
-        exciterMixSlider.setBounds(exciterRow.removeFromLeft(80));
-
-        s.removeFromTop(4);
-
-        auto compRow = s.removeFromTop(28);
-        compEnableButton.setBounds(compRow.removeFromLeft(90));
-        compRow.removeFromLeft(15);
-        compThreshLabel.setBounds(compRow.removeFromLeft(45));
-        compThreshSlider.setBounds(compRow.removeFromLeft(80));
-        compRow.removeFromLeft(10);
-        compRatioLabel.setBounds(compRow.removeFromLeft(40));
-        compRatioSlider.setBounds(compRow.removeFromLeft(65));
-        compRow.removeFromLeft(10);
-        compAttackLabel.setBounds(compRow.removeFromLeft(30));
-        compAttackSlider.setBounds(compRow.removeFromLeft(65));
-        compRow.removeFromLeft(10);
-        compReleaseLabel.setBounds(compRow.removeFromLeft(30));
-        compReleaseSlider.setBounds(compRow.removeFromLeft(65));
-    }
-
-    area.removeFromTop(6);
-
-    // === MACRO SECTION ===
-    macroSectionBounds = area.removeFromTop(70);
-    {
-        auto s = macroSectionBounds.reduced(8, 0);
-        // Toggle in title bar
-        macroSectionToggle.setBounds(macroSectionBounds.getRight() - 50, macroSectionBounds.getY() + 2, 40, 18);
-
-        s.removeFromTop(sectionHeaderH);
-
-        auto row = s.removeFromTop(28);
-        for (int i = 0; i < 4; ++i)
-        {
-            macroLabels[i].setBounds(row.removeFromLeft(55));
-            macroSliders[i].setBounds(row.removeFromLeft(100));
-            row.removeFromLeft(15);
-        }
-    }
-
-    area.removeFromTop(6);
-
-    // === PRESET SECTION ===
-    presetSectionBounds = area.removeFromTop(42);
-    {
-        auto s = presetSectionBounds.reduced(8, 0);
-        s.removeFromTop(10);
-        auto row = s.removeFromTop(26);
-        presetLabel.setBounds(row.removeFromLeft(50));
-        presetComboBox.setBounds(row.removeFromLeft(200));
-        row.removeFromLeft(10);
-        presetSaveButton.setBounds(row.removeFromLeft(60).withHeight(24));
-        row.removeFromLeft(5);
-        presetSaveAsButton.setBounds(row.removeFromLeft(80).withHeight(24));
-    }
-
-    area.removeFromTop(6);
-
-    // === BOTTOM CONTROLS ===
-    auto bottomRow = area.removeFromTop(35);
-    volumeLabel.setBounds(bottomRow.removeFromLeft(50));
-    volumeSlider.setBounds(bottomRow.removeFromLeft(200));
-    bottomRow.removeFromLeft(20);
-    panicButton.setBounds(bottomRow.removeFromRight(80).withHeight(28));
-    bottomRow.removeFromRight(10);
-    diagnosticsButton.setBounds(bottomRow.removeFromRight(100).withHeight(28));
+    // Patch cable overlay - set cross-row route Y to middle of gap between rows
+    float gapTop = static_cast<float>(inputPanel.getBottom());
+    float gapBottom = static_cast<float>(convolutionPanel.getY());
+    patchCables.setCrossRowY(gapTop + (gapBottom - gapTop) * 0.5f);
+    patchCables.setBounds(getLocalBounds());
+    patchCables.toFront(false);
 }

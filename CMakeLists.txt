@@ -47,6 +47,15 @@ target_sources(GongSynth PRIVATE
     src/IRWaveformComponent.cpp
     src/DiagnosticWindow.cpp
 
+    # Modular UI
+    src/ui/GongLookAndFeel.cpp
+    src/ui/RotaryKnob.cpp
+    src/ui/MeterComponent.cpp
+    src/ui/ModulePanel.cpp
+    src/ui/EnergyRingComponent.cpp
+    src/ui/ResonatorGridComponent.cpp
+    src/ui/PatchCableOverlay.cpp
+
     # Diagnostics & Modulation
     src/TestSignalGenerator.cpp
     src/ModulationBus.cpp
