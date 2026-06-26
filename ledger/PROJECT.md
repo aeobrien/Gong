@@ -4,6 +4,7 @@
 
 ## Status
 
+**Lane:** personal
 **Phase:** Mid-prototype — audio engine functional on desktop, hardware integration and Pi deployment not yet started
 **Last updated:** 2026-04-04
 
