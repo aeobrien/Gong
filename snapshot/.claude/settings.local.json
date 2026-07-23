@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:forum.juce.com)",
+      "Bash(git init:*)",
+      "Bash(git submodule add:*)",
+      "Bash(git fetch:*)",
+      "Bash(git checkout:*)",
+      "Bash(xcodebuild:*)",
+      "Bash(cmake:*)",
+      "WebFetch(domain:en.wikipedia.org)",
+      "Bash(wc:*)",
+      "Bash(ffprobe:*)",
+      "Bash(du:*)",
+      "Bash(git submodule:*)",
+      "Bash(git ls-tree:*)",
+      "Bash(git verify-pack:*)",
+      "Bash(git:*)",
+      "Bash(./build/tests/ConvolutionTest/ConvolutionTest_artefacts/Release/ConvolutionTest 2>&1)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/yhirose/cpp-httplib/v0.15.3/httplib.h\" -o /Users/aidan/Dev/Gong/libs/httplib/httplib.h && wc -l /Users/aidan/Dev/Gong/libs/httplib/httplib.h)",
+      "Bash(ls:*)"
+    ]
+  }
+}
