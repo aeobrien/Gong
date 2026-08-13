@@ -1,0 +1,38 @@
+{
+  "capture_finished_at_utc": "2026-08-13T00:42:02Z",
+  "capture_started_at_utc": "2026-08-13T00:42:00Z",
+  "captured_at_utc": "2026-08-13T00:42:00Z",
+  "captured_byte_estimate": 9088111,
+  "captured_path_count": 88,
+  "consistency_retry_count": 0,
+  "excluded": [
+    {
+      "path": "JUCE",
+      "reason": "unsupported_file_type",
+      "remote_recoverable": false,
+      "size": 64,
+      "threshold": null
+    },
+    {
+      "path": "JUCE_old",
+      "reason": "unsupported_file_type",
+      "remote_recoverable": false,
+      "size": 64,
+      "threshold": null
+    }
+  ],
+  "github_hard_limit_bytes": 100000000,
+  "guardian_version": "2.0-sidecar",
+  "head_state": "symbolic",
+  "host": "aidans-mac-mini",
+  "racy_capture": false,
+  "repository_id": "Gong-8664cd15ee9a",
+  "schema_version": 1,
+  "snapshot_blob_threshold_bytes": 94371840,
+  "snapshot_consistency": "stable",
+  "source_branch": "main",
+  "source_head_oid": "792eb4436dcb352cabcb9dc856418fd82a62a636",
+  "source_index_sha256": "d71bda96056ec310a43e466680517c81e762558b5cc53ed4c0214ed227ef6694",
+  "source_path": "/Users/aidanobrien/Dev/Gong",
+  "upstream_observed": "origin/main"
+}
