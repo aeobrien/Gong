@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Gong Performance</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="screen">
+        <div id="header">
+            <h1>GONG</h1>
+            <div id="status-bar">
+                <span id="current-preset">--</span>
+                <span class="divider">|</span>
+                <span id="current-ir">--</span>
+            </div>
+        </div>
+
+        <div id="tabs">
+            <button class="tab active" data-panel="presets">Presets</button>
+            <button class="tab" data-panel="irs">IRs</button>
+        </div>
+
+        <div id="panels">
+            <div id="presets-panel" class="panel active">
+                <div class="list" id="preset-list"></div>
+            </div>
+            <div id="irs-panel" class="panel">
+                <div class="list" id="ir-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
