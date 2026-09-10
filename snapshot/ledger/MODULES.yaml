@@ -1,0 +1,171 @@
+project_shape:
+  scale: multi-subsystem
+  has_subsystem_layer: true
+  expected_modules: "8-14"
+  kind: product
+
+modules:
+  - id: gong.audio-engine.excitation-and-strike-processing
+    project: Gong
+    subsystem: Audio Engine
+    name: Excitation and strike processing
+    capability: Accepts microphone or MIDI-derived strikes and turns them into excitation signals plus per-band energy injections for the synth.
+    status: working
+    approach: GongSynthesizer switches between filtered live audio excitation and StrikeDescriptor-driven synthetic bursts, with MIDI CC mapping and simple peak-based strike detection.
+    tech: [JUCE, juce_audio_basics, juce_dsp, MIDI]
+    io:
+      in: audio input buffers, MIDI messages, strike shaping parameters
+      out: excitation audio blocks, strike-triggered energy injections, resonator note updates
+    code_refs: [src/GongSynthesizer.cpp, src/GongSynthesizer.h, src/ImpulseGenerator.cpp, src/ImpulseGenerator.h, src/SyntheticImpulseGenerator.cpp, src/SyntheticImpulseGenerator.h, src/MidiControllerMock.cpp, src/MidiControllerMock.h, src/StrikeDescriptor.h]
+    known_gaps: [hardware strike capture is designed but not built yet, contact mic behaviour on MDF is untested, synthetic impulse quality is still an open question in ledger/PROJECT.md]
+    match_keywords: [audio excitation, strike detection, synthetic impulse generator, MIDI trigger mapping, contact mic front end]
+
+  - id: gong.audio-engine.energy-accumulator
+    project: Gong
+    subsystem: Audio Engine
+    name: Energy accumulator
+    capability: Tracks global and per-band energy over time and applies nonlinear decay, damping, coupling, roll priming, and bloom behaviour.
+    status: working
+    approach: A leaky-integrator model stores atomic energy reservoirs and updates them per block with exponential decay and custom nonlinear transfer rules.
+    tech: [JUCE, C++17, atomics, SpinLock]
+    io:
+      in: strike strengths, damping state, per-block sample counts, macro/modulation parameter changes
+      out: normalized global energy and per-band energy values for downstream modulation
+    code_refs: [src/EnergyAccumulator.cpp, src/EnergyAccumulator.h]
+    known_gaps: []
+    match_keywords: [energy model, leaky integrator, nonlinear envelope, modal energy coupling, gesture dynamics]
+
+  - id: gong.resonator-bank.modal-resonator-bank
+    project: Gong
+    subsystem: Resonator Bank
+    name: Modal resonator bank
+    capability: Generates the core gong body by driving four energy-responsive seven-voice resonators from the current excitation signal.
+    status: working
+    approach: ResonatorBank fans audio into four SpreadVoiceResonator instances built from JUCE IIR bandpass filters with per-voice detune, pan, brightness, and pitch-glide modulation plus optional modal templates.
+    tech: [JUCE, juce_dsp, IIR bandpass filters, MIDI note to frequency]
+    io:
+      in: stereo excitation buffers, normalized per-band energy, global resonator settings, modal template selection
+      out: stereo resonator output representing the main synthesized gong tone
+    code_refs: [src/ResonatorBank.cpp, src/ResonatorBank.h, src/SpreadVoiceResonator.cpp, src/SpreadVoiceResonator.h, src/ModalTemplate.h]
+    known_gaps: [developed against laptop mic input rather than the final physical instrument, Pi 5 performance for the full DSP chain is still unbenchmarked per ledger/PROJECT.md]
+    match_keywords: [modal synthesis, resonator bank, bandpass resonator, tuned resonators, physical modelling percussion]
+
+  - id: gong.nonlinear-dynamics.emergent-overtones-and-crash
+    project: Gong
+    subsystem: Nonlinear Dynamics
+    name: Emergent overtones and crash layer
+    capability: Adds energy-dependent combination tones and broadband crash noise on top of the base resonator output.
+    status: partial
+    approach: CombinationToneBank derives sum and difference bands from the strongest resonators while CrashNoiseGenerator injects filtered noise above an energy threshold.
+    tech: [JUCE, juce_dsp, StateVariableTPTFilter, bandpass filtering, noise synthesis]
+    io:
+      in: resonator output buffers, global energy, per-band energy, resonator effective frequencies
+      out: augmented stereo output with extra overtones and chaotic high-energy noise
+    code_refs: [src/CombinationToneBank.cpp, src/CombinationToneBank.h, src/CrashNoiseGenerator.cpp, src/CrashNoiseGenerator.h]
+    known_gaps: [ledger/PROJECT.md still marks Nonlinear Dynamics as specified but not implemented as a subsystem, advanced behaviour appears limited to the currently coded combination-tone and crash layers]
+    match_keywords: [combination tones, nonlinear resonance, emergent overtones, crash noise, chaotic vibration]
+
+  - id: gong.convolution-engine.ir-convolution-reverb
+    project: Gong
+    subsystem: Convolution Engine
+    name: IR convolution reverb
+    capability: Applies long-form gong impulse responses with wet-dry mixing, post-EQ, and optional energy-based crossfade to a second IR.
+    status: working
+    approach: A JUCE NonUniform convolution wrapper loads WAV IRs, re-prepares the engine after loads, manually mixes dry and wet paths, and can crossfade between two convolver instances.
+    tech: [JUCE, juce_dsp::Convolution, juce_audio_formats, WAV]
+    io:
+      in: stereo synth buffers, IR files or embedded IR data, wet-dry and EQ parameters, global energy for crossfade
+      out: reverberated stereo output plus IR buffer metadata for visualization
+    code_refs: [src/ConvolutionEngine.cpp, src/ConvolutionEngine.h, IRs/*.wav, tests/ConvolutionTest/Main.cpp]
+    known_gaps: [JUCE DryWetMixer does not work here so the module relies on manual dry-wet mixing, root cause of the DryWetMixer issue is explicitly uninvestigated in ledger/PROJECT.md]
+    match_keywords: [convolution reverb, impulse response loader, long IR, partitioned convolution, dual IR crossfade]
+
+  - id: gong.audio-engine.output-finishing-chain
+    project: Gong
+    subsystem: Audio Engine
+    name: Output finishing chain
+    capability: Shapes and stabilizes the synthesized signal after resonance using harmonic excitation and multiband compression.
+    status: working
+    approach: A high-passed tanh exciter feeds a three-band Linkwitz-Riley compressor stage, both implemented with JUCE DSP building blocks.
+    tech: [JUCE, juce_dsp, StateVariableTPTFilter, DryWetMixer, LinkwitzRileyFilter, Compressor]
+    io:
+      in: stereo post-convolution buffers and output-processing parameters
+      out: polished stereo output with added brightness and controlled dynamics
+    code_refs: [src/ExciterProcessor.cpp, src/ExciterProcessor.h, src/MultibandCompressor.cpp, src/MultibandCompressor.h]
+    known_gaps: []
+    match_keywords: [harmonic exciter, multiband compressor, mastering chain, output processing, dynamics control]
+
+  - id: gong.modulation-bus.runtime-modulation-and-macros
+    project: Gong
+    subsystem: Modulation Bus
+    name: Runtime modulation and macros
+    capability: Computes modulation offsets from meters, energy signals, LFOs, and four macro controls so UI parameters can move together at runtime.
+    status: working
+    approach: ModulationBus reads diagnostic state and applies route curves per block while MacroParameters contributes fixed semantic offsets such as size, material, intensity, and space.
+    tech: [C++17, atomics, LFOs]
+    io:
+      in: diagnostic metrics, modulation routes, LFO settings, macro knob values
+      out: parameter offsets for mapped synth, dynamics, and space controls
+    code_refs: [src/ModulationBus.cpp, src/ModulationBus.h, src/MacroParameters.cpp, src/MacroParameters.h, src/ModulationTypes.h, src/DiagnosticState.h]
+    known_gaps: []
+    match_keywords: [modulation matrix, macro controls, LFO routing, parameter modulation, control bus]
+
+  - id: gong.desktop-gui.sound-design-workbench
+    project: Gong
+    subsystem: Desktop GUI
+    name: Sound design workbench
+    capability: Provides the main standalone desktop interface for audio I/O, module control, visualization, auditioning, diagnostics, and patch-style parameter editing.
+    status: working
+    approach: MainComponent hosts the JUCE AudioAppComponent lifecycle and composes custom module panels, rotary controls, energy and resonator visualizers, IR display, and a diagnostics window.
+    tech: [JUCE, juce_gui_basics, juce_gui_extra, juce_audio_utils]
+    io:
+      in: user gestures, audio device state, MIDI device state, preset and IR selections
+      out: parameter changes, rendered visual feedback, desktop audio playback, diagnostics views
+    code_refs: [src/Main.cpp, src/MainComponent.cpp, src/MainComponent.h, src/IRWaveformComponent.cpp, src/IRWaveformComponent.h, src/DiagnosticWindow.cpp, src/DiagnosticWindow.h, src/ui/*.cpp, src/ui/*.h]
+    known_gaps: [the circular live-performance screen workflow is still unvalidated in ledger/PROJECT.md, UI is primarily a desktop development tool rather than finalized stage hardware UX]
+    match_keywords: [JUCE desktop GUI, synth editor, audio control surface, visualizer, patchable interface]
+
+  - id: gong.performance-ui.embedded-touch-ui
+    project: Gong
+    subsystem: Performance UI
+    name: Embedded touch UI
+    capability: Serves a lightweight browser-based performance surface for switching presets and impulse responses from a circular touchscreen.
+    status: partial
+    approach: PerformanceServer runs an embedded httplib HTTP server in a JUCE thread and exposes simple REST endpoints consumed by a static HTML/CSS/JS touch interface.
+    tech: [cpp-httplib, JUCE thread, REST, HTML, CSS, JavaScript]
+    io:
+      in: HTTP requests for preset and IR listing, activation requests, touch interactions in the browser
+      out: JSON status and catalog responses, preset and IR activation calls onto the JUCE message thread
+    code_refs: [src/PerformanceServer.cpp, src/PerformanceServer.h, web/index.html, web/app.js, web/style.css, libs/httplib/httplib.h]
+    known_gaps: [ledger/PROJECT.md marks Performance UI as early implementation, the web UI only switches presets and IRs and does not expose deeper parameter control, circular display usability remains an open question]
+    match_keywords: [embedded web UI, touchscreen control surface, local REST server, browser-based preset selector, performance interface]
+
+  - id: gong.preset-system.state-persistence
+    project: Gong
+    subsystem: Preset System
+    name: Preset persistence
+    capability: Saves and restores the instrument state, including synth, convolution, output, and modulation settings, as JSON presets.
+    status: partial
+    approach: PresetManager scans a preset directory, serializes the current engine state to JUCE JSON objects, and reloads that state back into the running engine.
+    tech: [JUCE, JSON, filesystem]
+    io:
+      in: current engine state, preset names, preset JSON files, IR filenames
+      out: written preset files, restored engine state, preset name lists
+    code_refs: [src/PresetManager.cpp, src/PresetManager.h, presets/*.json]
+    known_gaps: [ledger/PROJECT.md describes the preset system as early and the repo currently only includes one default preset]
+    match_keywords: [preset manager, state serialization, patch storage, JSON presets, recall system]
+
+  - id: gong.validation.convolution-regression-harness
+    project: Gong
+    subsystem: Convolution Engine
+    name: Convolution regression harness
+    capability: Verifies that long impulse responses still produce output and stay within real-time budgets across multiple block sizes and loading scenarios.
+    status: working
+    approach: A separate JUCE console target synthesizes test IRs and noise, runs the ConvolutionEngine headlessly, and logs RMS and timing diagnostics.
+    tech: [JUCE, CMake, console app, WAV writer]
+    io:
+      in: generated or temporary IR files, synthetic noise input, sample-rate and block-size test parameters
+      out: timing and RMS diagnostics for convolution behaviour
+    code_refs: [tests/ConvolutionTest/Main.cpp, tests/ConvolutionTest/CMakeLists.txt]
+    known_gaps: [test coverage is limited to convolution behaviour and does not exercise the broader synth, UI, or preset systems]
+    match_keywords: [DSP regression test, convolution test harness, realtime simulation, long IR validation, headless audio test]
