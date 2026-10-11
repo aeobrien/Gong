@@ -1,0 +1,29 @@
+# Build directories
+build/
+cmake-build-*/
+.build/
+xcode/
+
+# IDE files
+.idea/
+*.xcodeproj/
+*.xcworkspace/
+.vscode/
+
+# Compiled files
+*.o
+*.obj
+*.a
+*.lib
+*.dylib
+*.so
+*.dll
+
+# macOS
+.DS_Store
+*.dSYM/
+
+# Temporary files
+*.swp
+*.swo
+*~
