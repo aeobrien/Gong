@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "name": "Default Gong",
+  "masterGain": 0.8,
+  "input": {
+    "gain": 1.0,
+    "strikeThreshold": 0.1,
+    "strikeHoldoffMs": 50.0
+  },
+  "resonators": {
+    "globalDecay": 4.0,
+    "globalBrightness": 0.7,
+    "globalSpreadLevel": 0.5,
+    "globalPanWidth": 1.0,
+    "voices": [
+      {
+        "enabled": true,
+        "frequencyMode": "free",
+        "frequencyHz": 110.0,
+        "midiNote": 45,
+        "gainDb": 0.0,
+        "energyMod": {
+          "brightness": 0.5,
+          "spread": 0.3,
+          "detune": 0.2,
+          "panWidth": 0.3
+        }
+      },
+      {
+        "enabled": true,
+        "frequencyMode": "free",
+        "frequencyHz": 220.0,
+        "midiNote": 57,
+        "gainDb": 0.0,
+        "energyMod": {
+          "brightness": 0.5,
+          "spread": 0.3,
+          "detune": 0.2,
+          "panWidth": 0.3
+        }
+      },
+      {
+        "enabled": true,
+        "frequencyMode": "free",
+        "frequencyHz": 330.0,
+        "midiNote": 64,
+        "gainDb": 0.0,
+        "energyMod": {
+          "brightness": 0.5,
+          "spread": 0.3,
+          "detune": 0.2,
+          "panWidth": 0.3
+        }
+      },
+      {
+        "enabled": true,
+        "frequencyMode": "free",
+        "frequencyHz": 440.0,
+        "midiNote": 69,
+        "gainDb": 0.0,
+        "energyMod": {
+          "brightness": 0.5,
+          "spread": 0.3,
+          "detune": 0.2,
+          "panWidth": 0.3
+        }
+      }
+    ]
+  },
+  "energy": {
+    "decayMs": 2000.0,
+    "injectionGain": 1.0,
+    "injectionPower": 1.5
+  },
+  "convolution": {
+    "irFilename": "",
+    "mix": 0.4,
+    "gainDb": 0.0
+  },
+  "exciter": {
+    "enabled": true,
+    "highpassFreqHz": 500.0,
+    "drive": 2.0,
+    "mix": 0.3
+  },
+  "compressor": {
+    "enabled": true,
+    "thresholdDb": -12.0,
+    "ratio": 4.0,
+    "attackMs": 10.0,
+    "releaseMs": 100.0
+  }
+}
